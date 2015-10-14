@@ -117,7 +117,7 @@ object AkkaActorState {
   def initialize(): Unit = {
 
     val corePoolSize = getNumWorkers("actors.corePoolSize", 4)
-    val maxPoolSize = getNumWorkers("actors.maxPoolSize", corePoolSize)
+    val maxPoolSize  = getNumWorkers("actors.maxPoolSize", corePoolSize)
     val priorityMailboxType = getStringProp(mailboxTypeKey, "akka.dispatch.SingleConsumerOnlyUnboundedMailbox")
 
     val customConfigStr = """
@@ -144,14 +144,11 @@ object AkkaActorState {
           timeout = 10000s
         }
       }
-    }
-                          """.format(corePoolSize, maxPoolSize, priorityMailboxType)
+    }""".format(corePoolSize, maxPoolSize, priorityMailboxType)
 
-    // println(customConfigStr)
 
     val customConf = ConfigFactory.parseString(customConfigStr)
     config = ConfigFactory.load(customConf)
-
   }
 
   private def getNumWorkers(propertyName: String, minNumThreads: Int): Int = {
@@ -184,7 +181,6 @@ object AkkaActorState {
   }
 
   def startActor(actorRef: ActorRef) {
-
     AkkaActorState.actorLatch.updateCount()
 
     val promise = Promise[Boolean]()
@@ -199,7 +195,6 @@ object AkkaActorState {
         }
       case Failure(e) => e.printStackTrace
     }
-
   }
 
   def awaitTermination(system: ActorSystem) {
