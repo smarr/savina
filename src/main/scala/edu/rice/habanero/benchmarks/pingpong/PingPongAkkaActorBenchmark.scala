@@ -1,12 +1,16 @@
 package edu.rice.habanero.benchmarks.pingpong
 
-import akka.actor.{ActorRef, Props}
+import akka.actor.{ActorRef, Props, ActorSystem}
+import scala.concurrent.{Promise, Future}
+import scala.concurrent._
+import scala.util.Success
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.pingpong.PingPongConfig.{Message, PingMessage, StartMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.duration.Duration.Infinite
+import scala.concurrent.duration.Duration
 
 /**
- *
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
  */
 object PingPongAkkaActorBenchmark {
@@ -16,6 +20,9 @@ object PingPongAkkaActorBenchmark {
   }
 
   private final class PingPongAkkaActorBenchmark extends Benchmark {
+    
+    var system : ActorSystem = null
+    
     def initialize(args: Array[String]) {
       PingPongConfig.parseArgs(args)
     }
@@ -24,11 +31,11 @@ object PingPongAkkaActorBenchmark {
       PingPongConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Int] = {
+      system = AkkaActorState.newActorSystem("PingPong")
+      val p = Promise[Int]
 
-      val system = AkkaActorState.newActorSystem("PingPong")
-
-      val pong = system.actorOf(Props(new PongActor()))
+      val pong = system.actorOf(Props(new PongActor(p)))
       val ping = system.actorOf(Props(new PingActor(PingPongConfig.N, pong)))
 
       AkkaActorState.startActor(ping)
@@ -36,10 +43,18 @@ object PingPongAkkaActorBenchmark {
 
       ping ! StartMessage.ONLY
 
-      AkkaActorState.awaitTermination(system)
+      return p.future
+    }
+
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == PingPongConfig.N
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
@@ -69,7 +84,7 @@ object PingPongAkkaActorBenchmark {
     }
   }
 
-  private class PongActor extends AkkaActor[Message] {
+  private class PongActor(completion: Promise[Int]) extends AkkaActor[Message] {
     private var pongCount: Int = 0
 
     override def process(msg: PingPongConfig.Message) {
@@ -79,6 +94,7 @@ object PingPongAkkaActorBenchmark {
           sender ! new PingPongConfig.SendPongMessage(self)
           pongCount = pongCount + 1
         case _: PingPongConfig.StopMessage =>
+          completion.success(pongCount)
           exit()
         case message =>
           val ex = new IllegalArgumentException("Unsupported message: " + message)
@@ -86,5 +102,4 @@ object PingPongAkkaActorBenchmark {
       }
     }
   }
-
 }
