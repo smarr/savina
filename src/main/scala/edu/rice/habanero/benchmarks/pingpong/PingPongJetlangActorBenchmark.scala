@@ -3,6 +3,10 @@ package edu.rice.habanero.benchmarks.pingpong
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.pingpong.PingPongConfig.{Message, PingMessage, StartMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -23,17 +27,29 @@ object PingPongJetlangActorBenchmark {
       PingPongConfig.printArgs()
     }
 
-    def runIteration() {
-      val pong = new PongActor()
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
+      val pong = new PongActor(p)
       val ping = new PingActor(PingPongConfig.N, pong)
+      
       ping.start()
       pong.start()
+      
       ping.send(StartMessage.ONLY)
 
-      JetlangActorState.awaitTermination()
+      return p.future
     }
-
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == PingPongConfig.N
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
@@ -66,7 +82,7 @@ object PingPongJetlangActorBenchmark {
     }
   }
 
-  private class PongActor extends JetlangActor[Message] {
+  private class PongActor(completion: Promise[Int]) extends JetlangActor[Message] {
     private var pongCount: Int = 0
 
     override def process(msg: PingPongConfig.Message) {
@@ -76,6 +92,7 @@ object PingPongJetlangActorBenchmark {
           sender.send(new PingPongConfig.SendPongMessage(this))
           pongCount = pongCount + 1
         case _: PingPongConfig.StopMessage =>
+          completion.success(pongCount)
           exit()
         case message =>
           val ex = new IllegalArgumentException("Unsupported message: " + message)

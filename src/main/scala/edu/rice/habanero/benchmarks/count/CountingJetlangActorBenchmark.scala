@@ -2,6 +2,8 @@ package edu.rice.habanero.benchmarks.count
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Promise, Future, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -22,33 +24,49 @@ object CountingJetlangActorBenchmark {
       CountingConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Boolean] = {
+      val p = Promise[Boolean]
 
       val counter = new CountingActor()
+      val producer = new ProducerActor(p, counter)
+      
       counter.start()
-
-      val producer = new ProducerActor(counter)
       producer.start()
 
-      producer.send(IncrementMessage())
+      producer.send(new IncrementMessage())
 
-      JetlangActorState.awaitTermination()
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      return Await.result(f, Duration.Inf)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
     }
   }
 
-  private case class IncrementMessage()
+  private class IncrementMessage()
 
-  private case class RetrieveMessage(sender: JetlangActor[AnyRef])
+  private class RetrieveMessage(sender: JetlangActor[AnyRef]) {
+    def getSender() : JetlangActor[AnyRef] = {
+      return sender
+    }
+  }
 
-  private case class ResultMessage(result: Int)
+  private class ResultMessage(result: Int) {
+    def getResult() : Int = {
+      return result
+    }
+  }
 
-  private class ProducerActor(counter: JetlangActor[AnyRef]) extends JetlangActor[AnyRef] {
+  private class ProducerActor(completion: Promise[Boolean], counter: JetlangActor[AnyRef]) extends JetlangActor[AnyRef] {
 
     private val self = this
 
@@ -62,15 +80,14 @@ object CountingJetlangActorBenchmark {
             i += 1
           }
 
-          counter.send(RetrieveMessage(self))
+          counter.send(new RetrieveMessage(self))
 
         case m: ResultMessage =>
-          val result = m.result
+          val result = m.getResult()
           if (result != CountingConfig.N) {
             println("ERROR: expected: " + CountingConfig.N + ", found: " + result)
-          } else {
-            println("SUCCESS! received: " + result)
           }
+          completion.success(result == CountingConfig.N)
           exit()
       }
     }
@@ -85,7 +102,7 @@ object CountingJetlangActorBenchmark {
         case m: IncrementMessage =>
           count += 1
         case m: RetrieveMessage =>
-          m.sender.send(ResultMessage(count))
+          m.getSender().send(new ResultMessage(count))
           exit()
       }
     }
