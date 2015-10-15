@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import scala.concurrent.Future;
+
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
  */
@@ -33,7 +35,13 @@ public abstract class Benchmark {
 
     public abstract void printArgInfo();
 
-    public abstract void runIteration();
+    /** 
+     * Executes benchmark and verifies result. Is expected to return only
+     * once both tasks are completed.
+     * 
+     * @return true if verification succeeded, false otherwise
+     */
+    public boolean runAndVerify() { return false; }
 
     public abstract void cleanupIteration(boolean lastIteration, double execTimeMillis);
 

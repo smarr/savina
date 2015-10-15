@@ -63,11 +63,12 @@ public class BenchmarkRunner {
         final List<Double> rawExecTimes = new ArrayList<>(iterations);
 
         {
-
             System.out.println("Execution - Iterations: ");
             for (int i = 0; i < iterations; i++) {
                 final long startTime = System.nanoTime();
-                benchmark.runIteration();
+                if (!benchmark.runAndVerify()) {
+                	throw new RuntimeException("Verification of benchmark result failed.");
+                }
                 final long endTime = System.nanoTime();
 
                 final double execTimeMillis = (endTime - startTime) / 1e6;
