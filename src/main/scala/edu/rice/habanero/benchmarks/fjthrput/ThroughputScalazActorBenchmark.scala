@@ -2,6 +2,8 @@ package edu.rice.habanero.benchmarks.fjthrput
 
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -22,10 +24,14 @@ object ThroughputScalazActorBenchmark {
       ThroughputConfig.printArgs()
     }
 
-    def runIteration() {
-
+    def runIteration() : Future[List[Int]] = {
+      import ExecutionContext.Implicits.global
+      
+      val promises: List[Promise[Int]] = List.tabulate(ThroughputConfig.A)(x => Promise[Int])
+      val futures = promises.map(x => x.future)
+      
       val actors = Array.tabulate[ThroughputActor](ThroughputConfig.A)(i => {
-        val loopActor = new ThroughputActor(ThroughputConfig.N)
+        val loopActor = new ThroughputActor(promises(i), ThroughputConfig.N)
         loopActor.start()
         loopActor
       })
@@ -42,29 +48,38 @@ object ThroughputScalazActorBenchmark {
         m += 1
       }
 
-      ScalazActorState.awaitTermination()
+      return Future.sequence(futures)
     }
 
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      n.foreach { x => 
+        if (x != ThroughputConfig.N) { return false } }
+      return true
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class ThroughputActor(totalMessages: Int) extends ScalazActor[AnyRef] {
+  private class ThroughputActor(completion: Promise[Int], totalMessages: Int) extends ScalazActor[AnyRef] {
 
     private var messagesProcessed = 0
 
     override def process(msg: AnyRef) {
-
       messagesProcessed += 1
       ThroughputConfig.performComputation(37.2)
 
       if (messagesProcessed == totalMessages) {
+        completion.success(messagesProcessed)
         exit()
       }
     }
   }
-
 }
