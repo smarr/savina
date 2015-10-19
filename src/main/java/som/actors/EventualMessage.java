@@ -1,7 +1,7 @@
-package som.actorsflush;
+package som.actors;
 
-import som.actorsflush.Actor.ActorProcessingThread;
-import som.actorsflush.Promise.ResolutionAction;
+import som.actors.Actor.ActorProcessingThread;
+import som.actors.Promise.ResolutionAction;
 
 
 public abstract class EventualMessage {

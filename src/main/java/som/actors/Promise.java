@@ -1,11 +1,11 @@
-package som.actorsflush;
+package som.actors;
 
 import java.util.ArrayList;
 
 import com.sun.istack.internal.NotNull;
 
-import som.actorsflush.EventualMessage.PromiseCallbackMessage;
-import som.actorsflush.EventualMessage.PromiseMessage;
+import som.actors.EventualMessage.PromiseCallbackMessage;
+import som.actors.EventualMessage.PromiseMessage;
 
 public class Promise {
 	

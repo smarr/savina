@@ -1,10 +1,10 @@
-package som.actorsflush;
+package som.actors;
 
 import java.util.ArrayList;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinPool.ForkJoinWorkerThreadFactory;
 
-import som.actorsflush.Actor.ActorProcessingThread;
+import som.actors.Actor.ActorProcessingThread;
 
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.TimeUnit;
@@ -101,7 +101,7 @@ public abstract class Actor {
 		actorPool.execute(executor);
 	}
 
-	/** 
+	/**
 	 * @return true, if there are no scheduled submissions, 
 	 *         and no active threads in the pool, false otherwise.
 	 *         This is only best effort, it does not look at the actor's
