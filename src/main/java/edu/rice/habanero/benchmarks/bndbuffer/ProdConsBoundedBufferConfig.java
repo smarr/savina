@@ -1,8 +1,7 @@
 package edu.rice.habanero.benchmarks.bndbuffer;
 
 import edu.rice.habanero.benchmarks.BenchmarkRunner;
-
-import java.util.Random;
+import som.Random;
 
 /**
  * Computes Logistic Map source: http://en.wikipedia.org/wiki/Logistic_map
@@ -65,6 +64,18 @@ public final class ProdConsBoundedBufferConfig {
             i += 1;
         }
     }
+    
+    public static boolean verifyResult(double n) {
+    	long nn = Math.round(n);
+    	
+    	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer ==  60) { return nn ==   -43522486L; }
+    	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer ==  80) { return nn ==   -77056204L; }
+    	if (bufferSize == 40 && numProducers == 20 && numConsumers == 20 && numItemsPerProducer ==  80) { return nn ==  -154112409L; }
+    	if (bufferSize == 50 && numProducers == 20 && numConsumers == 20 && numItemsPerProducer == 100) { return nn ==  -240206069L; }
+    	if (bufferSize == 50 && numProducers == 40 && numConsumers == 40 && numItemsPerProducer == 100) { return nn ==  -480412139L; }
+    	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer == 600) { return nn == -4288035081L; }    	
+    	return false;
+    }
 
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "Buffer size", bufferSize);
@@ -109,13 +120,9 @@ public final class ProdConsBoundedBufferConfig {
         }
     }
 
-    protected static class ProduceDataMessage {
-        protected static ProduceDataMessage ONLY = new ProduceDataMessage();
-    }
+    protected static class ProduceDataMessage { }
 
-    protected static class ProducerExitMessage {
-        protected static ProducerExitMessage ONLY = new ProducerExitMessage();
-    }
+    protected static class ProducerExitMessage { }
 
     protected static class ConsumerAvailableMessage {
         public final Object consumer;
@@ -125,7 +132,5 @@ public final class ProdConsBoundedBufferConfig {
         }
     }
 
-    protected static class ConsumerExitMessage {
-        protected static ConsumerExitMessage ONLY = new ConsumerExitMessage();
-    }
+    protected static class ConsumerExitMessage { }
 }

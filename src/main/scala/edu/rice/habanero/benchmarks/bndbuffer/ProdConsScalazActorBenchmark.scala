@@ -4,6 +4,8 @@ import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.bndbuffer.ProdConsBoundedBufferConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 import scala.collection.mutable.ListBuffer
 
 /**
@@ -23,8 +25,10 @@ object ProdConsScalazActorBenchmark {
       ProdConsBoundedBufferConfig.printArgs()
     }
 
-    def runIteration() {
-      val manager = new ManagerActor(
+    def runIteration() : Future[Double] = {
+      val p = Promise[Double]
+
+      val manager = new ManagerActor(p,
         ProdConsBoundedBufferConfig.bufferSize,
         ProdConsBoundedBufferConfig.numProducers,
         ProdConsBoundedBufferConfig.numConsumers,
@@ -32,16 +36,25 @@ object ProdConsScalazActorBenchmark {
 
       manager.start()
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return ProdConsBoundedBufferConfig.verifyResult(n)
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
 
-    private class ManagerActor(bufferSize: Int, numProducers: Int, numConsumers: Int, numItemsPerProducer: Int) extends ScalazActor[AnyRef] {
+    private class ManagerActor(completion: Promise[Double], bufferSize: Int,
+    	numProducers: Int, numConsumers: Int,
+    	numItemsPerProducer: Int) extends ScalazActor[AnyRef] {
 
 
       private val adjustedBufferSize: Int = bufferSize - numProducers
@@ -49,6 +62,7 @@ object ProdConsScalazActorBenchmark {
       private val availableConsumers = new ListBuffer[ConsumerActor]
       private val pendingData = new ListBuffer[ProdConsBoundedBufferConfig.DataItemMessage]
       private var numTerminatedProducers: Int = 0
+	  private var dataSum: Double = 0.0
 
       private val producers = Array.tabulate[ProducerActor](numProducers)(i =>
         new ProducerActor(i, this, numItemsPerProducer))
@@ -63,20 +77,20 @@ object ProdConsScalazActorBenchmark {
 
         producers.foreach(loopProducer => {
           loopProducer.start()
-          loopProducer.send(ProduceDataMessage.ONLY)
+          loopProducer.send(new ProduceDataMessage())
         })
       }
 
       override def onPreExit() {
-        printActorInfo()
         consumers.foreach(loopConsumer => {
-          loopConsumer.send(ConsumerExitMessage.ONLY)
+          loopConsumer.send(new ConsumerExitMessage())
         })
       }
 
       override def process(theMsg: AnyRef) {
         theMsg match {
           case dm: ProdConsBoundedBufferConfig.DataItemMessage =>
+          	dataSum += dm.data
             val producer: ProducerActor = dm.producer.asInstanceOf[ProducerActor]
             if (availableConsumers.isEmpty) {
               pendingData.append(dm)
@@ -86,7 +100,7 @@ object ProdConsScalazActorBenchmark {
             if (pendingData.size >= adjustedBufferSize) {
               availableProducers.append(producer)
             } else {
-              producer.send(ProduceDataMessage.ONLY)
+              producer.send(new ProduceDataMessage())
             }
           case cm: ProdConsBoundedBufferConfig.ConsumerAvailableMessage =>
             val consumer: ConsumerActor = cm.consumer.asInstanceOf[ConsumerActor]
@@ -96,7 +110,7 @@ object ProdConsScalazActorBenchmark {
             } else {
               consumer.send(pendingData.remove(0))
               if (!availableProducers.isEmpty) {
-                availableProducers.remove(0).send(ProduceDataMessage.ONLY)
+                availableProducers.remove(0).send(new ProduceDataMessage())
               }
             }
           case _: ProdConsBoundedBufferConfig.ProducerExitMessage =>
@@ -109,7 +123,9 @@ object ProdConsScalazActorBenchmark {
       }
 
       def tryExit() {
-        if (numTerminatedProducers == numProducers && availableConsumers.size == numConsumers) {
+        if (numTerminatedProducers == numProducers &&
+        	availableConsumers.size == numConsumers) {
+          completion.success(dataSum)
           exit()
         }
       }
@@ -140,7 +156,7 @@ object ProdConsScalazActorBenchmark {
       }
 
       override def onPreExit() {
-        manager.send(ProducerExitMessage.ONLY)
+        manager.send(new ProducerExitMessage())
       }
     }
 
@@ -166,7 +182,5 @@ object ProdConsScalazActorBenchmark {
         }
       }
     }
-
   }
-
 }

@@ -4,8 +4,10 @@ import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.bndbuffer.ProdConsBoundedBufferConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
-
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 import scala.collection.mutable.ListBuffer
+import akka.actor.ActorSystem
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -16,6 +18,8 @@ object ProdConsAkkaActorBenchmark {
   }
 
   private final class ProdConsAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       ProdConsBoundedBufferConfig.parseArgs(args)
     }
@@ -24,12 +28,12 @@ object ProdConsAkkaActorBenchmark {
       ProdConsBoundedBufferConfig.printArgs()
     }
 
-    def runIteration() {
-
-      val system = AkkaActorState.newActorSystem("ProdCons")
+    def runIteration() : Future[Double] = {
+      system = AkkaActorState.newActorSystem("ProdCons")
+      val p = Promise[Double]
 
       val manager = system.actorOf(Props(
-        new ManagerActor(
+        new ManagerActor(p,
           ProdConsBoundedBufferConfig.bufferSize,
           ProdConsBoundedBufferConfig.numProducers,
           ProdConsBoundedBufferConfig.numConsumers,
@@ -38,20 +42,29 @@ object ProdConsAkkaActorBenchmark {
 
       AkkaActorState.startActor(manager)
 
-      AkkaActorState.awaitTermination(system)
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return ProdConsBoundedBufferConfig.verifyResult(n)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
 
-    private class ManagerActor(bufferSize: Int, numProducers: Int, numConsumers: Int, numItemsPerProducer: Int) extends AkkaActor[AnyRef] {
-
+    private class ManagerActor(completion: Promise[Double], bufferSize: Int,
+        numProducers: Int, numConsumers: Int,
+        numItemsPerProducer: Int) extends AkkaActor[AnyRef] {
 
       private val adjustedBufferSize: Int = bufferSize - numProducers
       private val availableProducers = new ListBuffer[ActorRef]
       private val availableConsumers = new ListBuffer[ActorRef]
       private val pendingData = new ListBuffer[ProdConsBoundedBufferConfig.DataItemMessage]
       private var numTerminatedProducers: Int = 0
+      private var dataSum: Double = 0.0
 
       private val producers = Array.tabulate[ActorRef](numProducers)(i =>
         context.system.actorOf(Props(new ProducerActor(i, self, numItemsPerProducer))))
@@ -69,19 +82,20 @@ object ProdConsAkkaActorBenchmark {
         })
 
         producers.foreach(loopProducer => {
-          loopProducer ! ProduceDataMessage.ONLY
+          loopProducer ! new ProduceDataMessage()
         })
       }
 
       override def onPreExit() {
         consumers.foreach(loopConsumer => {
-          loopConsumer ! ConsumerExitMessage.ONLY
+          loopConsumer ! new ConsumerExitMessage()
         })
       }
 
       override def process(theMsg: AnyRef) {
         theMsg match {
           case dm: ProdConsBoundedBufferConfig.DataItemMessage =>
+            dataSum += dm.data
             val producer: ActorRef = dm.producer.asInstanceOf[ActorRef]
             if (availableConsumers.isEmpty) {
               pendingData.append(dm)
@@ -91,7 +105,7 @@ object ProdConsAkkaActorBenchmark {
             if (pendingData.size >= adjustedBufferSize) {
               availableProducers.append(producer)
             } else {
-              producer ! ProduceDataMessage.ONLY
+              producer ! new ProduceDataMessage()
             }
           case cm: ProdConsBoundedBufferConfig.ConsumerAvailableMessage =>
             val consumer: ActorRef = cm.consumer.asInstanceOf[ActorRef]
@@ -101,7 +115,7 @@ object ProdConsAkkaActorBenchmark {
             } else {
               consumer ! pendingData.remove(0)
               if (!availableProducers.isEmpty) {
-                availableProducers.remove(0) ! ProduceDataMessage.ONLY
+                availableProducers.remove(0) ! new ProduceDataMessage()
               }
             }
           case _: ProdConsBoundedBufferConfig.ProducerExitMessage =>
@@ -114,13 +128,16 @@ object ProdConsAkkaActorBenchmark {
       }
 
       def tryExit() {
-        if (numTerminatedProducers == numProducers && availableConsumers.size == numConsumers) {
+        if (numTerminatedProducers == numProducers &&
+            availableConsumers.size == numConsumers) {
+          completion.success(dataSum)
           exit()
         }
       }
     }
 
-    private class ProducerActor(id: Int, manager: ActorRef, numItemsToProduce: Int) extends AkkaActor[AnyRef] {
+    private class ProducerActor(id: Int, manager: ActorRef,
+        numItemsToProduce: Int) extends AkkaActor[AnyRef] {
 
       private var prodItem: Double = 0.0
       private var itemsProduced: Int = 0
@@ -145,7 +162,7 @@ object ProdConsAkkaActorBenchmark {
       }
 
       override def onPreExit() {
-        manager ! ProducerExitMessage.ONLY
+        manager ! new ProducerExitMessage()
       }
     }
 
@@ -171,7 +188,5 @@ object ProdConsAkkaActorBenchmark {
         }
       }
     }
-
   }
-
 }
