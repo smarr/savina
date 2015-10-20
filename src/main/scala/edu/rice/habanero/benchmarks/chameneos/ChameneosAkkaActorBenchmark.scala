@@ -3,6 +3,9 @@ package edu.rice.habanero.benchmarks.chameneos
 import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import akka.actor.ActorSystem
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -15,6 +18,8 @@ object ChameneosAkkaActorBenchmark {
   }
 
   private final class ChameneosAkkaActorBenchmark extends Benchmark {
+    var system : ActorSystem = null
+    
     def initialize(args: Array[String]) {
       ChameneosConfig.parseArgs(args)
     }
@@ -23,24 +28,33 @@ object ChameneosAkkaActorBenchmark {
       ChameneosConfig.printArgs()
     }
 
-    def runIteration() {
-
-      val system = AkkaActorState.newActorSystem("Chameneos")
+    def runIteration() : Future[Int] = {
+      system = AkkaActorState.newActorSystem("Chameneos")
+      val p = Promise[Int]
 
       val mallActor = system.actorOf(Props(
-        new ChameneosMallActor(
+        new ChameneosMallActor(p,
           ChameneosConfig.numMeetings, ChameneosConfig.numChameneos)))
 
       AkkaActorState.startActor(mallActor)
 
-      AkkaActorState.awaitTermination(system)
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == 2 * ChameneosConfig.numMeetings
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
-  private class ChameneosMallActor(var n: Int, numChameneos: Int) extends AkkaActor[ChameneosHelper.Message] {
+  private class ChameneosMallActor(completion: Promise[Int], var n: Int,
+      numChameneos: Int) extends AkkaActor[ChameneosHelper.Message] {
 
     private var waitingChameneo: ActorRef = null
     private var sumMeetings: Int = 0
@@ -65,17 +79,18 @@ object ChameneosAkkaActorBenchmark {
           numFaded = numFaded + 1
           sumMeetings = sumMeetings + message.count
           if (numFaded == numChameneos) {
+            completion.success(sumMeetings)
             exit()
           }
         case message: ChameneosHelper.MeetMsg =>
           if (n > 0) {
+            val sender = message.sender.asInstanceOf[ActorRef]
             if (waitingChameneo == null) {
-              val sender = message.sender.asInstanceOf[ActorRef]
               waitingChameneo = sender
             }
             else {
               n = n - 1
-              waitingChameneo ! msg
+              waitingChameneo ! new ChameneosHelper.MeetMsg(message.color, sender)
               waitingChameneo = null
             }
           }

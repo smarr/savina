@@ -2,6 +2,8 @@ package edu.rice.habanero.benchmarks.chameneos
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -22,22 +24,33 @@ object ChameneosJetlangActorBenchmark {
       ChameneosConfig.printArgs()
     }
 
-    def runIteration() {
-      val mallActor = new ChameneosMallActor(
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
+      val mallActor = new ChameneosMallActor(p,
         ChameneosConfig.numMeetings, ChameneosConfig.numChameneos)
       mallActor.start()
 
-      JetlangActorState.awaitTermination()
+      return p.future 
+    }
+    
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == 2 * ChameneosConfig.numMeetings
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
     }
   }
 
-  private class ChameneosMallActor(var n: Int, numChameneos: Int) extends JetlangActor[ChameneosHelper.Message] {
+  private class ChameneosMallActor(completion: Promise[Int], var n: Int, numChameneos: Int) extends JetlangActor[ChameneosHelper.Message] {
 
     private final val self: JetlangActor[ChameneosHelper.Message] = this
     private var waitingChameneo: JetlangActor[ChameneosHelper.Message] = null
@@ -63,17 +76,18 @@ object ChameneosJetlangActorBenchmark {
           numFaded = numFaded + 1
           sumMeetings = sumMeetings + message.count
           if (numFaded == numChameneos) {
+            completion.success(sumMeetings)
             exit()
           }
         case message: ChameneosHelper.MeetMsg =>
           if (n > 0) {
+            val sender = message.sender.asInstanceOf[JetlangActor[ChameneosHelper.Message]]
             if (waitingChameneo == null) {
-              val sender = message.sender.asInstanceOf[JetlangActor[ChameneosHelper.Message]]
               waitingChameneo = sender
             }
             else {
               n = n - 1
-              waitingChameneo.send(msg)
+              waitingChameneo.send(new ChameneosHelper.MeetMsg(message.color, sender))
               waitingChameneo = null
             }
           }

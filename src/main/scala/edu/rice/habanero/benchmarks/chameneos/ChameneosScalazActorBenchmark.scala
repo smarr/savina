@@ -2,6 +2,8 @@ package edu.rice.habanero.benchmarks.chameneos
 
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -22,22 +24,33 @@ object ChameneosScalazActorBenchmark {
       ChameneosConfig.printArgs()
     }
 
-    def runIteration() {
-      val mallActor = new ChameneosMallActor(
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
+      val mallActor = new ChameneosMallActor(p,
         ChameneosConfig.numMeetings, ChameneosConfig.numChameneos)
       mallActor.start()
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == 2 * ChameneosConfig.numMeetings
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class ChameneosMallActor(var n: Int, numChameneos: Int) extends ScalazActor[ChameneosHelper.Message] {
+  private class ChameneosMallActor(completion: Promise[Int], var n: Int,
+      numChameneos: Int) extends ScalazActor[ChameneosHelper.Message] {
 
     private final val self: ScalazActor[ChameneosHelper.Message] = this
     private var waitingChameneo: ScalazActor[ChameneosHelper.Message] = null
@@ -63,6 +76,7 @@ object ChameneosScalazActorBenchmark {
           numFaded = numFaded + 1
           sumMeetings = sumMeetings + message.count
           if (numFaded == numChameneos) {
+            completion.success(sumMeetings)
             exit()
           }
         case message: ChameneosHelper.MeetMsg =>
