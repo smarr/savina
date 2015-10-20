@@ -63,7 +63,6 @@ object ChameneosScalazActorBenchmark {
           numFaded = numFaded + 1
           sumMeetings = sumMeetings + message.count
           if (numFaded == numChameneos) {
-            printActorInfo()
             exit()
           }
         case message: ChameneosHelper.MeetMsg =>
