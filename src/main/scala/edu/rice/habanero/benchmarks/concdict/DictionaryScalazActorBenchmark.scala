@@ -1,10 +1,11 @@
 package edu.rice.habanero.benchmarks.concdict
 
-import java.util
-
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.concdict.DictionaryConfig.{DoWorkMessage, EndWorkMessage, ReadMessage, WriteMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+import som.Random
 
 /**
  *
@@ -25,27 +26,37 @@ object DictionaryScalazActorBenchmark {
       DictionaryConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
       val numWorkers: Int = DictionaryConfig.NUM_ENTITIES
       val numMessagesPerWorker: Int = DictionaryConfig.NUM_MSGS_PER_WORKER
 
-      val master = new Master(numWorkers, numMessagesPerWorker)
+      val master = new Master(p, numWorkers, numMessagesPerWorker)
       master.start()
 
-      ScalazActorState.awaitTermination()
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return DictionaryConfig.verifyResult(n)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class Master(numWorkers: Int, numMessagesPerWorker: Int) extends ScalazActor[AnyRef] {
+  private class Master(completion: Promise[Int], numWorkers: Int,
+      numMessagesPerWorker: Int) extends ScalazActor[AnyRef] {
 
     private final val workers = new Array[ScalazActor[AnyRef]](numWorkers)
-    private final val dictionary = new Dictionary(DictionaryConfig.DATA_MAP)
+    private final val dictionary = new Dictionary(completion)
     private var numWorkersTerminated: Int = 0
 
     override def onPostStart() {
@@ -55,7 +66,7 @@ object DictionaryScalazActorBenchmark {
       while (i < numWorkers) {
         workers(i) = new Worker(this, dictionary, i, numMessagesPerWorker)
         workers(i).start()
-        workers(i).send(DoWorkMessage.ONLY)
+        workers(i).send(new DoWorkMessage())
         i += 1
       }
     }
@@ -64,7 +75,7 @@ object DictionaryScalazActorBenchmark {
       if (msg.isInstanceOf[DictionaryConfig.EndWorkMessage]) {
         numWorkersTerminated += 1
         if (numWorkersTerminated == numWorkers) {
-          dictionary.send(EndWorkMessage.ONLY)
+          dictionary.send(new EndWorkMessage())
           exit()
         }
       }
@@ -87,15 +98,16 @@ object DictionaryScalazActorBenchmark {
           dictionary.send(new ReadMessage(this, random.nextInt))
         }
       } else {
-        master.send(EndWorkMessage.ONLY)
+        master.send(new EndWorkMessage())
         exit()
       }
     }
   }
 
-  private class Dictionary(initialState: util.Map[Integer, Integer]) extends ScalazActor[AnyRef] {
+  private class Dictionary(completion: Promise[Int]) extends ScalazActor[AnyRef] {
 
-    private[concdict] final val dataMap = new util.HashMap[Integer, Integer](initialState)
+    private[concdict] final val dataMap = DictionaryConfig.createDataMap(
+        DictionaryConfig.DATA_LIMIT)
 
     override def process(msg: AnyRef) {
       msg match {
@@ -110,12 +122,11 @@ object DictionaryScalazActorBenchmark {
           val sender = readMessage.sender.asInstanceOf[ScalazActor[AnyRef]]
           sender.send(new DictionaryConfig.ResultMessage(this, value))
         case _: DictionaryConfig.EndWorkMessage =>
-          printf(BenchmarkRunner.argOutputFormat, "Dictionary Size", dataMap.size)
+          completion.success(dataMap.size)
           exit()
         case _ =>
           System.err.println("Unsupported message: " + msg)
       }
     }
   }
-
 }

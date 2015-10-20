@@ -14,8 +14,7 @@ public final class DictionaryConfig {
     protected static int NUM_MSGS_PER_WORKER = 10_000;
     protected static int WRITE_PERCENTAGE = 10;
 
-    protected static int DATA_LIMIT = Integer.MAX_VALUE / 4_096;
-    protected static Map<Integer, Integer> DATA_MAP = new HashMap<>(DATA_LIMIT);
+    protected static int DATA_LIMIT = 512; // Integer.MAX_VALUE / 4_096; adapted constant for SOM
 
     protected static boolean debug = false;
 
@@ -43,10 +42,18 @@ public final class DictionaryConfig {
             }
             i += 1;
         }
-
-        for (int k = 0; k < DATA_LIMIT; k++) {
-            DATA_MAP.put(k, k);
+    }
+    
+    public static boolean verifyResult(int result) {
+    	return result == DATA_LIMIT;
+    }
+    
+    public static Map<Integer, Integer> createDataMap(int size) {
+    	Map<Integer, Integer> result = new HashMap<>(size);
+    	for (int k = 0; k < size; k++) {
+            result.put(k, k);
         }
+    	return result;
     }
 
     protected static void printArgs() {
@@ -91,21 +98,6 @@ public final class DictionaryConfig {
         }
     }
 
-    protected static class DoWorkMessage {
-
-        protected static final DoWorkMessage ONLY = new DoWorkMessage();
-
-        private DoWorkMessage() {
-            super();
-        }
-    }
-
-    protected static class EndWorkMessage {
-
-        protected static final EndWorkMessage ONLY = new EndWorkMessage();
-
-        private EndWorkMessage() {
-            super();
-        }
-    }
+    protected static class DoWorkMessage { }
+    protected static class EndWorkMessage { }
 }
