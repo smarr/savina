@@ -3,6 +3,10 @@ package edu.rice.habanero.benchmarks.threadring
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.threadring.ThreadRingConfig.{DataMessage, ExitMessage, PingMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -23,11 +27,12 @@ object ThreadRingScalazActorBenchmark {
       ThreadRingConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Int] = {
+      val promise = Promise[Int]
 
       val numActorsInRing = ThreadRingConfig.N
       val ringActors = Array.tabulate[ScalazActor[AnyRef]](numActorsInRing)(i => {
-        val loopActor = new ThreadRingActor(i, numActorsInRing)
+        val loopActor = new ThreadRingActor(i, numActorsInRing, promise)
         loopActor.start()
         loopActor
       })
@@ -39,17 +44,25 @@ object ThreadRingScalazActorBenchmark {
 
       ringActors(0).send(new PingMessage(ThreadRingConfig.R))
 
-      ScalazActorState.awaitTermination()
+      return promise.future
     }
 
+    override def runAndVerify(): Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == 0
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class ThreadRingActor(id: Int, numActorsInRing: Int) extends ScalazActor[AnyRef] {
+  private class ThreadRingActor(id: Int, numActorsInRing: Int,
+      completion: Promise[Int]) extends ScalazActor[AnyRef] {
 
     private var nextActor: ScalazActor[AnyRef] = null
 
@@ -58,25 +71,23 @@ object ThreadRingScalazActorBenchmark {
       msg match {
 
         case pm: PingMessage =>
-
           if (pm.hasNext) {
             nextActor.send(pm.next())
           } else {
-            nextActor.send(new ExitMessage(numActorsInRing))
+            nextActor.send(new ExitMessage(numActorsInRing - 1))
           }
 
         case em: ExitMessage =>
-
           if (em.hasNext) {
             nextActor.send(em.next())
+          } else {
+            completion.success(id)
           }
           exit()
 
         case dm: DataMessage =>
-
           nextActor = dm.data.asInstanceOf[ScalazActor[AnyRef]]
       }
     }
   }
-
 }
