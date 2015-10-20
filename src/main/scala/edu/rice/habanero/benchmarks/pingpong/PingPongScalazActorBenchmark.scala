@@ -3,6 +3,8 @@ package edu.rice.habanero.benchmarks.pingpong
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.pingpong.PingPongConfig.{Message, PingMessage, StartMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Promise, Future, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -23,17 +25,27 @@ object PingPongScalazActorBenchmark {
       PingPongConfig.printArgs()
     }
 
-    def runIteration() {
-      val pong = new PongActor()
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
+      val pong = new PongActor(p)
       val ping = new PingActor(PingPongConfig.N, pong)
       ping.start()
       pong.start()
       ping.send(StartMessage.ONLY)
 
-      ScalazActorState.awaitTermination()
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == PingPongConfig.N
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
       if (lastIteration) {
         ScalazPool.shutdown()
       }
@@ -66,7 +78,7 @@ object PingPongScalazActorBenchmark {
     }
   }
 
-  private class PongActor extends ScalazActor[Message] {
+  private class PongActor(completion: Promise[Int]) extends ScalazActor[Message] {
     private var pongCount: Int = 0
 
     override def process(msg: PingPongConfig.Message) {
@@ -76,6 +88,7 @@ object PingPongScalazActorBenchmark {
           sender.send(new PingPongConfig.SendPongMessage(this))
           pongCount = pongCount + 1
         case _: PingPongConfig.StopMessage =>
+          completion.success(pongCount)
           exit()
         case message =>
           val ex = new IllegalArgumentException("Unsupported message: " + message)
