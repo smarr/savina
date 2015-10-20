@@ -36,13 +36,11 @@ object ThroughputScalazActorBenchmark {
         loopActor
       })
 
-      val message = new Object()
-
       var m = 0
       while (m < ThroughputConfig.N) {
 
         actors.foreach(loopActor => {
-          loopActor.send(message)
+          loopActor.send(new Object())
         })
 
         m += 1
