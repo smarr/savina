@@ -1,10 +1,11 @@
 package edu.rice.habanero.benchmarks.concsll
 
-import java.util.Random
-
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.concsll.SortedListConfig.{DoWorkMessage, EndWorkMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+import som.Random
 
 /**
  *
@@ -25,27 +26,38 @@ object SortedListScalazActorBenchmark {
       SortedListConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
+      
       val numWorkers: Int = SortedListConfig.NUM_ENTITIES
       val numMessagesPerWorker: Int = SortedListConfig.NUM_MSGS_PER_WORKER
 
-      val master = new Master(numWorkers, numMessagesPerWorker)
+      val master = new Master(p, numWorkers, numMessagesPerWorker)
       master.start()
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return SortedListConfig.verifyResult(n)
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class Master(numWorkers: Int, numMessagesPerWorker: Int) extends ScalazActor[AnyRef] {
+  private class Master(completion: Promise[Int], numWorkers: Int,
+      numMessagesPerWorker: Int) extends ScalazActor[AnyRef] {
 
     private final val workers = new Array[ScalazActor[AnyRef]](numWorkers)
-    private final val sortedList = new SortedList()
+    private final val sortedList = new SortedList(completion)
     private var numWorkersTerminated: Int = 0
 
     override def onPostStart() {
@@ -53,9 +65,9 @@ object SortedListScalazActorBenchmark {
 
       var i: Int = 0
       while (i < numWorkers) {
-        workers(i) = new Worker(this, sortedList, i, numMessagesPerWorker)
+        workers(i) = new Worker(this, sortedList, i + 1, numMessagesPerWorker)
         workers(i).start()
-        workers(i).send(DoWorkMessage.ONLY)
+        workers(i).send(new DoWorkMessage())
         i += 1
       }
     }
@@ -64,7 +76,7 @@ object SortedListScalazActorBenchmark {
       if (msg.isInstanceOf[SortedListConfig.EndWorkMessage]) {
         numWorkersTerminated += 1
         if (numWorkersTerminated == numWorkers) {
-          sortedList.send(EndWorkMessage.ONLY)
+          sortedList.send(new EndWorkMessage())
           exit()
         }
       }
@@ -81,22 +93,22 @@ object SortedListScalazActorBenchmark {
     override def process(msg: AnyRef) {
       messageCount += 1
       if (messageCount <= numMessagesPerWorker) {
-        val anInt: Int = random.nextInt(100)
+        val anInt: Int = random.next(100)
         if (anInt < sizePercent) {
           sortedList.send(new SortedListConfig.SizeMessage(this))
         } else if (anInt < (sizePercent + writePercent)) {
-          sortedList.send(new SortedListConfig.WriteMessage(this, random.nextInt))
+          sortedList.send(new SortedListConfig.WriteMessage(this, random.next()))
         } else {
-          sortedList.send(new SortedListConfig.ContainsMessage(this, random.nextInt))
+          sortedList.send(new SortedListConfig.ContainsMessage(this, random.next()))
         }
       } else {
-        master.send(EndWorkMessage.ONLY)
+        master.send(new EndWorkMessage())
         exit()
       }
     }
   }
 
-  private class SortedList extends ScalazActor[AnyRef] {
+  private class SortedList(completion: Promise[Int]) extends ScalazActor[AnyRef] {
 
     private[concsll] final val dataList = new SortedLinkedList[Integer]
 
@@ -117,7 +129,7 @@ object SortedListScalazActorBenchmark {
           val sender = readMessage.sender.asInstanceOf[ScalazActor[AnyRef]]
           sender.send(new SortedListConfig.ResultMessage(this, value))
         case _: SortedListConfig.EndWorkMessage =>
-          printf(BenchmarkRunner.argOutputFormat, "List Size", dataList.size)
+          completion.success(dataList.size)
           exit()
         case _ =>
           System.err.println("Unsupported message: " + msg)

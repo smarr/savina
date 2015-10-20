@@ -50,6 +50,18 @@ public final class SortedListConfig {
             throw new IllegalArgumentException("(2 * write-rate) + sum-rate must be less than 100!");
         }
     }
+    
+    public static boolean verifyResult(int n) {
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER ==   20 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n ==   18; }
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER ==  100 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n ==  106; }
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER ==  300 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n ==  292; }
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER ==  500 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n ==  476; }
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER == 1000 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n ==  992; }
+    	if (NUM_ENTITIES == 10 && NUM_MSGS_PER_WORKER == 1500 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n == 1496; }
+    	if (NUM_ENTITIES == 20 && NUM_MSGS_PER_WORKER == 1000 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n == 1959; }
+    	if (NUM_ENTITIES == 20 && NUM_MSGS_PER_WORKER == 2000 && WRITE_PERCENTAGE == 10 && SIZE_PERCENTAGE == 1) { return n == 3956; }
+    	return false;
+    }
 
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "Num Entities", NUM_ENTITIES);
@@ -101,21 +113,7 @@ public final class SortedListConfig {
         }
     }
 
-    protected static class DoWorkMessage {
+    protected static class DoWorkMessage { }
 
-        protected static final DoWorkMessage ONLY = new DoWorkMessage();
-
-        private DoWorkMessage() {
-            super();
-        }
-    }
-
-    protected static class EndWorkMessage {
-
-        protected static final EndWorkMessage ONLY = new EndWorkMessage();
-
-        private EndWorkMessage() {
-            super();
-        }
-    }
+    protected static class EndWorkMessage { }
 }
