@@ -39,12 +39,13 @@ public final class ForkJoinConfig {
         System.out.printf(BenchmarkRunner.argOutputFormat, "debug", debug);
     }
 
-    protected static void performComputation(final double theta) {
+    protected static double performComputation(final double theta) {
         final double sint = Math.sin(theta);
         final double res = sint * sint;
         //defeat dead code elimination
         if (res <= 0) {
             throw new IllegalStateException("Benchmark exited with unrealistic res value " + res);
         }
+        return res;
     }
 }

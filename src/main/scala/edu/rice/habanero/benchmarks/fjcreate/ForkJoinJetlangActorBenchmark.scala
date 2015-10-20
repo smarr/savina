@@ -2,6 +2,9 @@ package edu.rice.habanero.benchmarks.fjcreate
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+
 
 /**
  *
@@ -22,31 +25,45 @@ object ForkJoinJetlangActorBenchmark {
       ForkJoinConfig.printArgs()
     }
 
-    def runIteration() {
-      val message = new Object()
-      var i = 0
-      while (i < ForkJoinConfig.N) {
-        val fjRunner = new ForkJoinActor()
+    def runIteration() : Future[List[Double]] = {
+      import ExecutionContext.Implicits.global
+      
+      val promises: List[Promise[Double]] = List.tabulate(ForkJoinConfig.N)(
+          x => Promise[Double])
+      
+      promises.foreach(p => {
+        val fjRunner = new ForkJoinActor(p)
         fjRunner.start()
-        fjRunner.send(message)
-        i += 1
-      }
+        fjRunner.send(new Object())
+      })
 
-      JetlangActorState.awaitTermination()
+      val futures = promises.map(x => x.future)
+      return Future.sequence(futures)
+    }
+    
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      val expResult = ForkJoinConfig.performComputation(37.2)
+      n.foreach { x => 
+        if (x != expResult) { return false } }
+      return true
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
     }
   }
 
-  private class ForkJoinActor extends JetlangActor[AnyRef] {
+  private class ForkJoinActor(completion: Promise[Double]) extends JetlangActor[AnyRef] {
     override def process(msg: AnyRef) {
-      ForkJoinConfig.performComputation(37.2)
+      completion.success(ForkJoinConfig.performComputation(37.2))
       exit()
     }
   }
-
 }
