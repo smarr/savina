@@ -2,8 +2,6 @@ package som.actors;
 
 import java.util.ArrayList;
 
-import com.sun.istack.internal.NotNull;
-
 import som.actors.EventualMessage.PromiseCallbackMessage;
 import som.actors.EventualMessage.PromiseMessage;
 
@@ -130,7 +128,7 @@ public class Promise {
 		}
 	}
 
-	public final synchronized void addChainedPromise(@NotNull final Promise promise) {
+	public final synchronized void addChainedPromise(final Promise promise) {
 		assert promise != null;
 		promise.resolutionState = Resolution.CHAINED;
 
