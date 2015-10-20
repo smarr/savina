@@ -41,7 +41,7 @@ object CountingAkkaActorBenchmark {
       AkkaActorState.startActor(counter)
       AkkaActorState.startActor(producer)
 
-      producer ! IncrementMessage()
+      producer ! new IncrementMessage()
 
       return p.future
     }
@@ -57,11 +57,19 @@ object CountingAkkaActorBenchmark {
     }
   }
 
-  private case class IncrementMessage()
+  private class IncrementMessage()
 
-  private case class RetrieveMessage(sender: ActorRef)
+  private class RetrieveMessage(sender: ActorRef) {
+    def getSender() : ActorRef = {
+      return sender
+    }
+  }
 
-  private case class ResultMessage(result: Int)
+  private class ResultMessage(result: Int) {
+    def getResult() : Int = {
+      return result
+    }
+  }
 
   private class ProducerActor(completion: Promise[Boolean], counter: ActorRef) extends AkkaActor[AnyRef] {
 
@@ -73,10 +81,10 @@ object CountingAkkaActorBenchmark {
             counter ! m
             i += 1
           }
-          counter ! RetrieveMessage(self)
+          counter ! new RetrieveMessage(self)
 
         case m: ResultMessage =>
-          val result = m.result
+          val result = m.getResult()
           if (result != CountingConfig.N) {
             println("ERROR: expected: " + CountingConfig.N + ", found: " + result)
           }
@@ -95,10 +103,9 @@ object CountingAkkaActorBenchmark {
         case m: IncrementMessage =>
           count += 1
         case m: RetrieveMessage =>
-          m.sender ! ResultMessage(count)
+          m.getSender() ! new ResultMessage(count)
           exit()
       }
     }
   }
-
 }

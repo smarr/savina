@@ -2,6 +2,8 @@ package edu.rice.habanero.benchmarks.count
 
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
 
 /**
  *
@@ -22,33 +24,45 @@ object CountingScalazActorBenchmark {
       CountingConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Boolean] = {
+      val p = Promise[Boolean]
 
       val counter = new CountingActor()
+      val producer = new ProducerActor(p, counter)
+      
       counter.start()
-
-      val producer = new ProducerActor(counter)
       producer.start()
 
-      producer.send(IncrementMessage())
+      producer.send(new IncrementMessage())
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private case class IncrementMessage()
+  private class IncrementMessage()
 
-  private case class RetrieveMessage(sender: ScalazActor[AnyRef])
+  private class RetrieveMessage(sender: ScalazActor[AnyRef]) {
+    def getSender() : ScalazActor[AnyRef] = {
+      return sender
+    }
+  }
 
-  private case class ResultMessage(result: Int)
+  private class ResultMessage(result: Int) {
+    def getResult() : Int = {
+      return result
+    }
+  }
 
-  private class ProducerActor(counter: ScalazActor[AnyRef]) extends ScalazActor[AnyRef] {
+  private class ProducerActor(completion: Promise[Boolean],
+      counter: ScalazActor[AnyRef]) extends ScalazActor[AnyRef] {
 
     private val self = this
 
@@ -62,15 +76,14 @@ object CountingScalazActorBenchmark {
             i += 1
           }
 
-          counter.send(RetrieveMessage(self))
+          counter.send(new RetrieveMessage(self))
 
         case m: ResultMessage =>
-          val result = m.result
+          val result = m.getResult()
           if (result != CountingConfig.N) {
             println("ERROR: expected: " + CountingConfig.N + ", found: " + result)
-          } else {
-            println("SUCCESS! received: " + result)
           }
+          completion.success(result == CountingConfig.N)
           exit()
       }
     }
@@ -85,7 +98,7 @@ object CountingScalazActorBenchmark {
         case m: IncrementMessage =>
           count += 1
         case m: RetrieveMessage =>
-          m.sender.send(ResultMessage(count))
+          m.getSender().send(new ResultMessage(count))
           exit()
       }
     }
