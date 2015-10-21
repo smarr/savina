@@ -3,6 +3,8 @@ package edu.rice.habanero.benchmarks.trapezoid
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.trapezoid.TrapezoidalConfig.{ResultMessage, WorkMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -23,27 +25,38 @@ object TrapezoidalScalazActorBenchmark {
       TrapezoidalConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Double] = {
+      val p = Promise[Double]
+
       val numWorkers: Int = TrapezoidalConfig.W
       val precision: Double = (TrapezoidalConfig.R - TrapezoidalConfig.L) / TrapezoidalConfig.N
 
-      val master = new Master(numWorkers)
+      val master = new Master(p, numWorkers)
       master.start()
       master.send(new WorkMessage(TrapezoidalConfig.L, TrapezoidalConfig.R, precision))
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
-    def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return TrapezoidalConfig.verifyResult(n)
+    }
+    
+    def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class Master(numWorkers: Int) extends ScalazActor[AnyRef] {
+  private class Master(completion: Promise[Double], numWorkers: Int) extends ScalazActor[AnyRef] {
 
-    private final val workers = Array.tabulate[Worker](numWorkers)(i => new Worker(this, i))
+    private final val workers = Array.tabulate[Worker](numWorkers)(i =>
+      new Worker(this, i))
     private var numTermsReceived: Int = 0
     private var resultArea: Double = 0.0
 
@@ -55,18 +68,17 @@ object TrapezoidalScalazActorBenchmark {
 
     override def process(msg: AnyRef) {
       msg match {
-        case rm: ResultMessage =>
 
+        case rm: ResultMessage =>
           numTermsReceived += 1
           resultArea += rm.result
 
           if (numTermsReceived == numWorkers) {
-            println("  Area: " + resultArea)
+            completion.success(resultArea)
             exit()
           }
 
         case wm: WorkMessage =>
-
           val workerRange: Double = (wm.r - wm.l) / numWorkers
           for ((loopWorker, i) <- workers.view.zipWithIndex) {
 
@@ -77,7 +89,6 @@ object TrapezoidalScalazActorBenchmark {
           }
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
@@ -116,5 +127,4 @@ object TrapezoidalScalazActorBenchmark {
       }
     }
   }
-
 }

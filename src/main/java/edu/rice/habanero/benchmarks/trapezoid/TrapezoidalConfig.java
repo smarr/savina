@@ -42,6 +42,20 @@ public final class TrapezoidalConfig {
             i += 1;
         }
     }
+    
+    public static boolean verifyResult(double r) {
+    	long rr = Math.round(r * 100_000_000);
+    	
+    	if (W == 100 && N ==     2500 && L == 1 && R == 5) { return rr == 27107880; }
+    	if (W == 100 && N ==     5000 && L == 1 && R == 5) { return rr == 27108026; }
+    	if (W == 100 && N ==    10000 && L == 1 && R == 5) { return rr == 27108063; }
+    	if (W == 100 && N ==   100000 && L == 1 && R == 5) { return rr == 27108075; }
+    	if (W == 100 && N ==  1000000 && L == 1 && R == 5) { return rr == 27108075; }
+    	if (W == 100 && N == 10000000 && L == 1 && R == 5) { return rr == 27108075; }
+    	
+    	System.out.println(rr);
+    	return false;
+    }
 
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "N (num trapezoids)", N);
@@ -52,7 +66,6 @@ public final class TrapezoidalConfig {
     }
 
     protected static double fx(final double x) {
-
         final double a = Math.sin(Math.pow(x, 3) - 1);
         final double b = x + 1;
         final double c = a / b;

@@ -4,6 +4,9 @@ import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.trapezoid.TrapezoidalConfig.{ResultMessage, WorkMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+import akka.actor.ActorSystem
 
 /**
  *
@@ -16,6 +19,8 @@ object TrapezoidalAkkaActorBenchmark {
   }
 
   private final class TrapezoidalAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       TrapezoidalConfig.parseArgs(args)
     }
@@ -24,25 +29,33 @@ object TrapezoidalAkkaActorBenchmark {
       TrapezoidalConfig.printArgs()
     }
 
-    def runIteration() {
-
-      val system = AkkaActorState.newActorSystem("Trapezoidal")
+    def runIteration() : Future[Double] = {
+      system = AkkaActorState.newActorSystem("Trapezoidal")
+      val p = Promise[Double]
 
       val numWorkers: Int = TrapezoidalConfig.W
       val precision: Double = (TrapezoidalConfig.R - TrapezoidalConfig.L) / TrapezoidalConfig.N
 
-      val master = system.actorOf(Props(new Master(numWorkers)))
+      val master = system.actorOf(Props(new Master(p, numWorkers)))
       AkkaActorState.startActor(master)
+      
       master ! new WorkMessage(TrapezoidalConfig.L, TrapezoidalConfig.R, precision)
 
-      AkkaActorState.awaitTermination(system)
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return TrapezoidalConfig.verifyResult(n)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
-  private class Master(numWorkers: Int) extends AkkaActor[AnyRef] {
+  private class Master(completion: Promise[Double], numWorkers: Int) extends AkkaActor[AnyRef] {
 
     private final val workers = Array.tabulate[ActorRef](numWorkers)(i =>
       context.system.actorOf(Props(new Worker(self, i))))
@@ -57,18 +70,17 @@ object TrapezoidalAkkaActorBenchmark {
 
     override def process(msg: AnyRef) {
       msg match {
-        case rm: ResultMessage =>
 
+        case rm: ResultMessage =>
           numTermsReceived += 1
           resultArea += rm.result
 
           if (numTermsReceived == numWorkers) {
-            println("  Area: " + resultArea)
+            completion.success(resultArea)
             exit()
           }
 
         case wm: WorkMessage =>
-
           val workerRange: Double = (wm.r - wm.l) / numWorkers
           for ((loopWorker, i) <- workers.view.zipWithIndex) {
 
@@ -79,7 +91,6 @@ object TrapezoidalAkkaActorBenchmark {
           }
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
@@ -91,7 +102,6 @@ object TrapezoidalAkkaActorBenchmark {
     override def process(msg: AnyRef) {
       msg match {
         case wm: WorkMessage =>
-
           val n = ((wm.r - wm.l) / wm.h).asInstanceOf[Int]
           var accumArea = 0.0
 
@@ -108,7 +118,6 @@ object TrapezoidalAkkaActorBenchmark {
 
             i += 1
           }
-
           master ! new ResultMessage(accumArea, id)
           exit()
 
@@ -118,5 +127,4 @@ object TrapezoidalAkkaActorBenchmark {
       }
     }
   }
-
 }
