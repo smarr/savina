@@ -1,6 +1,7 @@
 package edu.rice.habanero.benchmarks.uct;
 
 import edu.rice.habanero.benchmarks.BenchmarkRunner;
+import som.Random;
 
 /**
  * Unbalanced Cobwebbed Tree benchmark.
@@ -13,7 +14,6 @@ public final class UctConfig {
     protected static int AVG_COMP_SIZE = 500; // average computation size
     protected static int STDEV_COMP_SIZE = 100; // standard deviation of the computation size
     protected static int BINOMIAL_PARAM = 10; // binomial parameter: each node may have either 0 or binomial children
-    protected static int URGENT_NODE_PERCENT = 50; // percentage of urgent nodes
     protected static boolean debug = false;
 
     protected static void parseArgs(final String[] args) {
@@ -38,10 +38,6 @@ public final class UctConfig {
                     i += 1;
                     BINOMIAL_PARAM = Integer.parseInt(args[i]);
                     break;
-                case "-urgent":
-                    i += 1;
-                    URGENT_NODE_PERCENT = Integer.parseInt(args[i]);
-                    break;
                 case "-debug":
                 case "-verbose":
                     debug = true;
@@ -57,36 +53,24 @@ public final class UctConfig {
         System.out.printf(BenchmarkRunner.argOutputFormat, "Avg. comp size", AVG_COMP_SIZE);
         System.out.printf(BenchmarkRunner.argOutputFormat, "Std. dev. comp size", STDEV_COMP_SIZE);
         System.out.printf(BenchmarkRunner.argOutputFormat, "Binomial Param", BINOMIAL_PARAM);
-        System.out.printf(BenchmarkRunner.argOutputFormat, "Urgent node percent", URGENT_NODE_PERCENT);
         System.out.printf(BenchmarkRunner.argOutputFormat, "debug", debug);
     }
 
-    protected static int loop(int busywait, int dummy) {
-        int test = 0;
-        long current = System.currentTimeMillis();
-
-        for (int k = 0; k < dummy * busywait; k++) {
-            test++;
+    protected static int loop(int times, Random ran) {
+    	int result = 0;
+        for (int i = 0; i < times; i++) {
+        	result = ran.next();
         }
-
-        return test;
+        return result;
     }
 
-    protected static class GetIdMessage {
-        protected static GetIdMessage ONLY = new GetIdMessage();
-    }
+    protected static class GetIdMessage { }
 
-    protected static class PrintInfoMessage {
-        protected static PrintInfoMessage ONLY = new PrintInfoMessage();
-    }
+    protected static class PrintInfoMessage { }
 
-    protected static class GenerateTreeMessage {
-        protected static GenerateTreeMessage ONLY = new GenerateTreeMessage();
-    }
+    protected static class GenerateTreeMessage { }
 
-    protected static class TryGenerateChildrenMessage {
-        protected static TryGenerateChildrenMessage ONLY = new TryGenerateChildrenMessage();
-    }
+    protected static class TryGenerateChildrenMessage { }
 
     protected static class GenerateChildrenMessage {
         public final int currentId;
@@ -98,24 +82,13 @@ public final class UctConfig {
         }
     }
 
-    protected static class UrgentGenerateChildrenMessage {
-        public final int urgentChildId;
-        public final int currentId;
-        public final int compSize;
-
-        public UrgentGenerateChildrenMessage(final int urgentChildId, final int currentId, final int compSize) {
-            this.urgentChildId = urgentChildId;
-            this.currentId = currentId;
-            this.compSize = compSize;
-        }
-    }
-
-    protected static class TraverseMessage {
-        protected static TraverseMessage ONLY = new TraverseMessage();
-    }
-
-    protected static class UrgentTraverseMessage {
-        protected static UrgentTraverseMessage ONLY = new UrgentTraverseMessage();
+    protected static class TraverseMessage { }
+    
+    protected static class TraversedMessage {
+    	public final int treeSize;
+    	public TraversedMessage(int treeSize) {
+    		this.treeSize = treeSize;
+    	}
     }
 
     protected static class ShouldGenerateChildrenMessage {
@@ -134,9 +107,5 @@ public final class UctConfig {
         public UpdateGrantMessage(final int childId) {
             this.childId = childId;
         }
-    }
-
-    protected static class TerminateMessage {
-        protected static TerminateMessage ONLY = new TerminateMessage();
     }
 }

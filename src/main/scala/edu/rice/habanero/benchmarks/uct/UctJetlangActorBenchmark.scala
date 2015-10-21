@@ -1,10 +1,12 @@
 package edu.rice.habanero.benchmarks.uct
 
-import java.util.Random
-
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.uct.UctConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+import som.Random
+
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -24,15 +26,24 @@ object UctJetlangActorBenchmark {
       UctConfig.printArgs()
     }
 
-    def runIteration() {
-      val rootActor = new RootActor()
-      rootActor.start()
-      rootActor.send(GenerateTreeMessage.ONLY)
+    def runIteration() : Future[Int] = {
+      val p = Promise[Int]
 
-      JetlangActorState.awaitTermination()
+      val rootActor = new RootActor(p)
+      rootActor.start()
+      rootActor.send(new GenerateTreeMessage())
+
+      return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return n == UctConfig.MAX_NODES - UctConfig.BINOMIAL_PARAM
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      JetlangActorState.awaitTermination()
       if (lastIteration) {
         JetlangPool.shutdown()
       }
@@ -43,15 +54,16 @@ object UctJetlangActorBenchmark {
    * @author xinghuizhao
    * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
    */
-  protected class RootActor extends JetlangActor[AnyRef] {
+  protected class RootActor(completion: Promise[Int]) extends JetlangActor[AnyRef] {
 
-    private final val ran: Random = new Random(2)
+    private final val ran: Random = new Random()
     private var height: Int = 1
     private var size: Int = 1
     private final val children = new Array[JetlangActor[AnyRef]](UctConfig.BINOMIAL_PARAM)
     private final val hasGrantChildren = new Array[Boolean](UctConfig.BINOMIAL_PARAM)
-    private var traversed: Boolean = false
-    private var finalSizePrinted: Boolean = false
+    private var traversedChildren: Int = 0
+    private var subtreeSize: Int = 0
+    private var startedTraversal: Boolean = false
 
     override def process(theMsg: AnyRef) {
       theMsg match {
@@ -64,8 +76,8 @@ object UctJetlangActorBenchmark {
           checkGenerateChildrenRequest(sender, booleanMessage.childHeight)
         case _: UctConfig.PrintInfoMessage =>
           printInfo()
-        case _: UctConfig.TerminateMessage =>
-          terminateMe()
+        case tdMsg: UctConfig.TraversedMessage =>
+          traversed(tdMsg.treeSize)
         case _ =>
       }
     }
@@ -81,17 +93,14 @@ object UctJetlangActorBenchmark {
       while (i < UctConfig.BINOMIAL_PARAM) {
 
         hasGrantChildren(i) = false
-        children(i) = NodeActor.createNodeActor(this, this, height, size + i, computationSize, urgent = false)
-
+        children(i) = NodeActor.createNodeActor(this, this, height, size + i, computationSize)
         i += 1
       }
       size += UctConfig.BINOMIAL_PARAM
 
       var j: Int = 0
       while (j < UctConfig.BINOMIAL_PARAM) {
-
-        children(j).send(TryGenerateChildrenMessage.ONLY)
-
+        children(j) ! new TryGenerateChildrenMessage()
         j += 1
       }
     }
@@ -108,34 +117,21 @@ object UctJetlangActorBenchmark {
         val moreChildren: Boolean = ran.nextBoolean
         if (moreChildren) {
           val childComp: Int = getNextNormal(UctConfig.AVG_COMP_SIZE, UctConfig.STDEV_COMP_SIZE)
-          val randomInt: Int = ran.nextInt(100)
-          if (randomInt > UctConfig.URGENT_NODE_PERCENT) {
-            childName.send(new UctConfig.GenerateChildrenMessage(size, childComp))
-          } else {
-            childName.send(new UctConfig.UrgentGenerateChildrenMessage(ran.nextInt(UctConfig.BINOMIAL_PARAM), size, childComp))
-          }
+          val randomInt: Int = ran.next(100)
+          
+          childName.send(new UctConfig.GenerateChildrenMessage(size, childComp))
+          
           size += UctConfig.BINOMIAL_PARAM
           if (childHeight + 1 > height) {
             height = childHeight + 1
           }
         }
-        else {
-          if (childHeight > height) {
-            height = childHeight
-          }
+        else if (childHeight > height) {
+          height = childHeight
         }
-      }
-      else {
-        if (!finalSizePrinted) {
-          System.out.println("final size= " + size)
-          System.out.println("final height= " + height)
-          finalSizePrinted = true
-        }
-        if (!traversed) {
-          traversed = true
-          traverse()
-        }
-        terminateMe()
+      } else if (!startedTraversal) {
+        startedTraversal = true
+        traverse()
       }
     }
 
@@ -165,33 +161,28 @@ object UctJetlangActorBenchmark {
     def traverse() {
       var i: Int = 0
       while (i < UctConfig.BINOMIAL_PARAM) {
-        children(i).send(TraverseMessage.ONLY)
+        children(i).send(new TraverseMessage())
         i += 1
       }
     }
 
+    def traversed(treeSize: Int) {
+      traversedChildren += 1
+      subtreeSize += treeSize
+      if (traversedChildren == UctConfig.BINOMIAL_PARAM) {
+        completion.success(subtreeSize)  // height * size
+        exit()
+      }
+    }
+    
     def printInfo() {
       System.out.println("0 0 children starts 1")
       var i: Int = 0
       while (i < UctConfig.BINOMIAL_PARAM) {
-
-        children(i).send(PrintInfoMessage.ONLY)
+        children(i).send(new PrintInfoMessage())
         i += 1
       }
 
-    }
-
-    def terminateMe() {
-      if (hasExited()) {
-        return
-      }
-      var i: Int = 0
-      while (i < UctConfig.BINOMIAL_PARAM) {
-        children(i).send(TerminateMessage.ONLY)
-        i += 1
-      }
-
-      exit()
     }
   }
 
@@ -200,21 +191,21 @@ object UctJetlangActorBenchmark {
    * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
    */
   protected object NodeActor {
-    def createNodeActor(parent: JetlangActor[AnyRef], root: JetlangActor[AnyRef], height: Int, id: Int, comp: Int, urgent: Boolean): NodeActor = {
-      val nodeActor: NodeActor = new NodeActor(parent, root, height, id, comp, urgent)
+    def createNodeActor(parent: JetlangActor[AnyRef], root: JetlangActor[AnyRef], height: Int, id: Int, comp: Int): NodeActor = {
+      val nodeActor: NodeActor = new NodeActor(parent, root, height, id, comp)
       nodeActor.start()
       nodeActor
     }
-
-    private final val dummy: Int = 40000
   }
 
-  protected class NodeActor(myParent: JetlangActor[AnyRef], myRoot: JetlangActor[AnyRef], myHeight: Int, myId: Int, myCompSize: Int, isUrgent: Boolean) extends JetlangActor[AnyRef] {
+  protected class NodeActor(myParent: JetlangActor[AnyRef], myRoot: JetlangActor[AnyRef], myHeight: Int, myId: Int, myCompSize: Int) extends JetlangActor[AnyRef] {
 
-    private var urgentChild: Int = 0
     private var hasChildren: Boolean = false
+    private var traversedChildren: Int = 0
+    private var subtreeSize: Int = 0
     private final val children = new Array[JetlangActor[AnyRef]](UctConfig.BINOMIAL_PARAM)
     private final val hasGrantChildren = new Array[Boolean](UctConfig.BINOMIAL_PARAM)
+    private final val busyLoopRan = new Random()
 
     override def process(theMsg: AnyRef) {
       theMsg match {
@@ -222,20 +213,16 @@ object UctJetlangActorBenchmark {
           tryGenerateChildren()
         case childrenMessage: UctConfig.GenerateChildrenMessage =>
           generateChildren(childrenMessage.currentId, childrenMessage.compSize)
-        case childrenMessage: UctConfig.UrgentGenerateChildrenMessage =>
-          generateUrgentChildren(childrenMessage.urgentChildId, childrenMessage.currentId, childrenMessage.compSize)
         case grantMessage: UctConfig.UpdateGrantMessage =>
           updateGrant(grantMessage.childId)
         case _: UctConfig.TraverseMessage =>
           traverse()
-        case _: UctConfig.UrgentTraverseMessage =>
-          urgentTraverse()
+        case tdMsg: UctConfig.TraversedMessage =>
+          traversed(tdMsg.treeSize)
         case _: UctConfig.PrintInfoMessage =>
           printInfo()
         case _: UctConfig.GetIdMessage =>
           getId
-        case _: UctConfig.TerminateMessage =>
-          terminateMe()
         case _ =>
       }
     }
@@ -245,7 +232,7 @@ object UctJetlangActorBenchmark {
      * If the "getBoolean" message returns true, the node is allowed to generate BINOMIAL_PARAM children
      */
     def tryGenerateChildren() {
-      UctConfig.loop(100, NodeActor.dummy)
+      UctConfig.loop(UctConfig.AVG_COMP_SIZE / 50, busyLoopRan)
       myRoot.send(new UctConfig.ShouldGenerateChildrenMessage(this, myHeight))
     }
 
@@ -257,8 +244,7 @@ object UctJetlangActorBenchmark {
 
       var i: Int = 0
       while (i < UctConfig.BINOMIAL_PARAM) {
-
-        children(i) = NodeActor.createNodeActor(this, myRoot, childrenHeight, idValue + i, compSize, urgent = false)
+        children(i) = NodeActor.createNodeActor(this, myRoot, childrenHeight, idValue + i, compSize)
         i += 1
       }
 
@@ -266,32 +252,7 @@ object UctJetlangActorBenchmark {
 
       var j: Int = 0
       while (j < UctConfig.BINOMIAL_PARAM) {
-
-        children(j).send(TryGenerateChildrenMessage.ONLY)
-        j += 1
-      }
-    }
-
-    def generateUrgentChildren(urgentChildId: Int, currentId: Int, compSize: Int) {
-      val myArrayId: Int = myId % UctConfig.BINOMIAL_PARAM
-      myParent.send(new UctConfig.UpdateGrantMessage(myArrayId))
-      val childrenHeight: Int = myHeight + 1
-      val idValue: Int = currentId
-      urgentChild = urgentChildId
-
-      var i: Int = 0
-      while (i < UctConfig.BINOMIAL_PARAM) {
-
-        children(i) = NodeActor.createNodeActor(this, myRoot, childrenHeight, idValue + i, compSize, i == urgentChild)
-        i += 1
-      }
-
-      hasChildren = true
-
-      var j: Int = 0
-      while (j < UctConfig.BINOMIAL_PARAM) {
-
-        children(j).send(TryGenerateChildrenMessage.ONLY)
+        children(j).send(new TryGenerateChildrenMessage())
         j += 1
       }
     }
@@ -307,61 +268,36 @@ object UctJetlangActorBenchmark {
      * This message is called by parent while doing a traverse
      */
     def traverse() {
-      UctConfig.loop(myCompSize, NodeActor.dummy)
+      traversedChildren = 0
+      UctConfig.loop(myCompSize, busyLoopRan)
       if (hasChildren) {
-
         var i: Int = 0
         while (i < UctConfig.BINOMIAL_PARAM) {
-
-          children(i).send(TraverseMessage.ONLY)
+          children(i).send(new TraverseMessage())
           i += 1
         }
+      } else {
+    	myParent.send(new TraversedMessage(1))
+    	exit()
       }
     }
 
-    /**
-     * This message is called by parent while doing traverse, if this node is an urgent node
-     */
-    def urgentTraverse() {
-      UctConfig.loop(myCompSize, NodeActor.dummy)
-      if (hasChildren) {
-        if (urgentChild != -1) {
-
-          var i: Int = 0
-          while (i < UctConfig.BINOMIAL_PARAM) {
-            if (i != urgentChild) {
-              children(i).send(TraverseMessage.ONLY)
-            } else {
-              children(urgentChild).send(UrgentTraverseMessage.ONLY)
-            }
-            i += 1
-          }
-        } else {
-
-          var i: Int = 0
-          while (i < UctConfig.BINOMIAL_PARAM) {
-            children(i).send(TraverseMessage.ONLY)
-            i += 1
-          }
-        }
-      }
-      if (isUrgent) {
-        System.out.println("urgent traverse node " + myId + " " + System.currentTimeMillis)
-      } else {
-        System.out.println(myId + " " + System.currentTimeMillis)
+    def traversed(treeSize: Int) {
+      subtreeSize += treeSize
+      traversedChildren += 1
+      if (traversedChildren == UctConfig.BINOMIAL_PARAM) {
+        myParent.send(new TraversedMessage(subtreeSize + 1))
+        exit()
       }
     }
 
     def printInfo() {
-      if (isUrgent) {
-        System.out.print("Urgent......")
-      }
       if (hasChildren) {
         System.out.println(myId + " " + myCompSize + "  children starts ")
 
         var i: Int = 0
         while (i < UctConfig.BINOMIAL_PARAM) {
-          children(i).send(PrintInfoMessage.ONLY)
+          children(i).send(new PrintInfoMessage())
           i += 1
         }
       } else {
@@ -372,21 +308,5 @@ object UctJetlangActorBenchmark {
     def getId: Int = {
       myId
     }
-
-    def terminateMe() {
-      if (hasExited()) {
-        return
-      }
-      if (hasChildren) {
-
-        var i: Int = 0
-        while (i < UctConfig.BINOMIAL_PARAM) {
-          children(i).send(TerminateMessage.ONLY)
-          i += 1
-        }
-      }
-      exit()
-    }
   }
-
 }
