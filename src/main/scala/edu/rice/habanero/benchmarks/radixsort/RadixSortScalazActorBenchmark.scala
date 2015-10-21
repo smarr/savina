@@ -1,9 +1,10 @@
 package edu.rice.habanero.benchmarks.radixsort
 
-import java.util.Random
-
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.{Future, Promise, ExecutionContext, Await}
+import scala.concurrent.duration.Duration
+import som.Random
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -23,18 +24,20 @@ object RadixSortScalazActorBenchmark {
       RadixSortConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Long] = {
+      val p = Promise[Long]
 
-      val validationActor = new ValidationActor(RadixSortConfig.N)
+      val validationActor = new ValidationActor(p, RadixSortConfig.N)
       validationActor.start()
 
-      val sourceActor = new IntSourceActor(RadixSortConfig.N, RadixSortConfig.M, RadixSortConfig.S)
+      val sourceActor = new IntSourceActor(
+    		  RadixSortConfig.N, RadixSortConfig.M, RadixSortConfig.S)
       sourceActor.start()
 
       var radix = RadixSortConfig.M / 2
       var nextActor: ScalazActor[AnyRef] = validationActor
-      while (radix > 0) {
 
+      while (radix > 0) {
         val sortActor = new SortActor(RadixSortConfig.N, radix, nextActor)
         sortActor.start()
 
@@ -42,23 +45,40 @@ object RadixSortScalazActorBenchmark {
         nextActor = sortActor
       }
 
-      sourceActor.send(NextActorMessage(nextActor))
+      sourceActor.send(new NextActorMessage(nextActor))
 
-      ScalazActorState.awaitTermination()
+      return p.future
     }
 
-    def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val n = Await.result(f, Duration.Inf)
+      return RadixSortConfig.verifyResult(n)
+    }
+    
+    def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private case class NextActorMessage(actor: ScalazActor[AnyRef])
+  private class NextActorMessage(actor: ScalazActor[AnyRef]) {
+	def getActor() : ScalazActor[AnyRef] = {
+	  return actor
+	}
+  }
 
-  private case class ValueMessage(value: Long)
+  private class ValueMessage(value: Int) {
+	def getValue() : Int = {
+      return value
+    }
+  }
 
-  private class IntSourceActor(numValues: Int, maxValue: Long, seed: Long) extends ScalazActor[AnyRef] {
+  private class IntSourceActor(numValues: Int, maxValue: Int, seed: Int)
+      extends ScalazActor[AnyRef] {
 
     val random = new Random(seed)
 
@@ -69,10 +89,9 @@ object RadixSortScalazActorBenchmark {
 
           var i = 0
           while (i < numValues) {
-
-            val candidate = Math.abs(random.nextLong()) % maxValue
+            val candidate = Math.abs(random.next()) % maxValue
             val message = new ValueMessage(candidate)
-            nm.actor.send(message)
+            nm.getActor().send(message)
 
             i += 1
           }
@@ -82,9 +101,10 @@ object RadixSortScalazActorBenchmark {
     }
   }
 
-  private class SortActor(numValues: Int, radix: Long, nextActor: ScalazActor[AnyRef]) extends ScalazActor[AnyRef] {
+  private class SortActor(numValues: Int, radix: Long, nextActor: ScalazActor[AnyRef])
+      extends ScalazActor[AnyRef] {
 
-    private val orderingArray = Array.ofDim[ValueMessage](numValues)
+    private val orderingArray = Array.ofDim[Int](numValues)
     private var valuesSoFar = 0
     private var j = 0
 
@@ -93,12 +113,11 @@ object RadixSortScalazActorBenchmark {
         case vm: ValueMessage =>
 
           valuesSoFar += 1
-
-          val current = vm.value
+          val current = vm.getValue()
           if ((current & radix) == 0) {
             nextActor.send(vm)
           } else {
-            orderingArray(j) = vm
+            orderingArray(j) = current
             j += 1
           }
 
@@ -106,7 +125,7 @@ object RadixSortScalazActorBenchmark {
 
             var i = 0
             while (i < j) {
-              nextActor.send(orderingArray(i))
+              nextActor.send(new ValueMessage(orderingArray(i)))
               i += 1
             }
 
@@ -116,12 +135,13 @@ object RadixSortScalazActorBenchmark {
     }
   }
 
-  private class ValidationActor(numValues: Int) extends ScalazActor[AnyRef] {
+  private class ValidationActor(completion: Promise[Long], numValues: Int)
+      extends ScalazActor[AnyRef] {
 
-    private var sumSoFar = 0.0
+    private var sumSoFar = 0L
     private var valuesSoFar = 0
-    private var prevValue = 0L
-    private var errorValue = (-1L, -1)
+    private var prevValue = 0
+    private var errorValue = (-1, -1)
 
     override def process(msg: AnyRef) {
 
@@ -130,18 +150,17 @@ object RadixSortScalazActorBenchmark {
 
           valuesSoFar += 1
 
-          if (vm.value < prevValue && errorValue._1 < 0) {
-            errorValue = (vm.value, valuesSoFar - 1)
+          if (vm.getValue() < prevValue && errorValue._1 < 0) {
+            errorValue = (vm.getValue(), valuesSoFar - 1)
           }
-          prevValue = vm.value
+          prevValue = vm.getValue()
           sumSoFar += prevValue
 
           if (valuesSoFar == numValues) {
             if (errorValue._1 >= 0) {
               println("ERROR: Value out of place: " + errorValue._1 + " at index " + errorValue._2)
-            } else {
-              println("Elements sum: " + sumSoFar)
             }
+            completion.success(sumSoFar)
             exit()
           }
       }

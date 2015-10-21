@@ -8,8 +8,8 @@ import edu.rice.habanero.benchmarks.BenchmarkRunner;
 public final class RadixSortConfig {
 
     protected static int N = 100_000; // data size
-    protected static long M = 1L << 60; // max value
-    protected static long S = 2_048; // seed for random number generator
+    protected static int M = 1 << 30; // max value
+    protected static int S = 2_048; // seed for random number generator
     protected static boolean debug = false;
 
     protected static void parseArgs(final String[] args) {
@@ -23,11 +23,11 @@ public final class RadixSortConfig {
                     break;
                 case "-m":
                     i += 1;
-                    M = Long.parseLong(args[i]);
+                    M = Integer.parseInt(args[i]);
                     break;
                 case "-s":
                     i += 1;
-                    S = Long.parseLong(args[i]);
+                    S = Integer.parseInt(args[i]);
                     break;
                 case "-debug":
                 case "-verbose":
@@ -36,6 +36,14 @@ public final class RadixSortConfig {
             }
             i += 1;
         }
+    }
+    
+    public static boolean verifyResult(long n) {
+    	if (N ==   100 && M ==   256 && S == 74755) { return n ==      13606L; }
+    	if (N == 10000 && M == 65536 && S == 74755) { return n ==  329373752L; }
+    	if (N == 50000 && M == 65536 && S == 74755) { return n == 1642300184L; }
+    	
+    	return false;
     }
 
     protected static void printArgs() {
