@@ -4,6 +4,8 @@ import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 import scala.concurrent.Future
 import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -38,6 +40,11 @@ object CountingScalazActorBenchmark {
       return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      return Await.result(f, Duration.Inf)
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       ScalazActorState.awaitTermination()
       
