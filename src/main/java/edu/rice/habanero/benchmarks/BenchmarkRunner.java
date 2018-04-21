@@ -1,9 +1,13 @@
 package edu.rice.habanero.benchmarks;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
 import edu.rice.habanero.actors.AkkaActorState;
 import edu.rice.hj.runtime.config.HjSystemProperty;
-
-import java.util.*;
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -67,7 +71,9 @@ public class BenchmarkRunner {
             for (int i = 0; i < iterations; i++) {
                 final long startTime = System.nanoTime();
                 if (!benchmark.runAndVerify()) {
-                	throw new RuntimeException("Verification of benchmark result failed.");
+                  // throw new RuntimeException("Verification of benchmark result failed.");
+                  System.out.println("Verification of benchmark result failed.");
+                  System.exit(1);
                 }
                 final long endTime = System.nanoTime();
 

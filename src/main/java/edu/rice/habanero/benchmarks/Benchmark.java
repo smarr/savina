@@ -6,8 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import scala.concurrent.Future;
-
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
  */
@@ -28,17 +26,17 @@ public abstract class Benchmark {
 
     public final String runtimeInfo() {
         final String javaVersion = System.getProperty("java.version");
-        return "Java:" + javaVersion + "::Scala:2.11.0";
+        return "Java:" + javaVersion;
     }
 
     public abstract void initialize(String[] args) throws IOException;
 
     public abstract void printArgInfo();
 
-    /** 
+    /**
      * Executes benchmark and verifies result. Is expected to return only
      * once both tasks are completed.
-     * 
+     *
      * @return true if verification succeeded, false otherwise
      */
     public boolean runAndVerify() { return false; }
