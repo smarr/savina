@@ -64,16 +64,20 @@ public final class ProdConsBoundedBufferConfig {
             i += 1;
         }
     }
-    
-    public static boolean verifyResult(double n) {
+
+    public static boolean verifyResult(final double n) {
     	long nn = Math.round(n);
-    	
+
     	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer ==  60) { return nn ==   -43522486L; }
     	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer ==  80) { return nn ==   -77056204L; }
     	if (bufferSize == 40 && numProducers == 20 && numConsumers == 20 && numItemsPerProducer ==  80) { return nn ==  -154112409L; }
+    	if (bufferSize == 50 && numProducers == 20 && numConsumers == 20 && numItemsPerProducer ==  30) { return nn ==    -13559615; }
     	if (bufferSize == 50 && numProducers == 20 && numConsumers == 20 && numItemsPerProducer == 100) { return nn ==  -240206069L; }
     	if (bufferSize == 50 && numProducers == 40 && numConsumers == 40 && numItemsPerProducer == 100) { return nn ==  -480412139L; }
-    	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer == 600) { return nn == -4288035081L; }    	
+    	if (bufferSize == 40 && numProducers == 10 && numConsumers == 10 && numItemsPerProducer == 600) { return nn == -4288035081L; }
+
+    	System.out.println("Not result for bS: " + bufferSize + " nP: " + numProducers + " nC: " + numConsumers + " nIPP: " + numItemsPerProducer + " result was: " + nn);
+
     	return false;
     }
 
