@@ -1,6 +1,7 @@
 package edu.rice.habanero.benchmarks.cigsmok;
 
 import edu.rice.habanero.benchmarks.BenchmarkRunner;
+import som.Random;
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -28,17 +29,28 @@ public final class CigaretteSmokerConfig {
         }
     }
 
+    public static boolean verify(final long result) {
+      System.out.println("Verify result for R: " + R + " S: " + S + " result: " + result);
+
+      if (R ==  1000 && S == 200) { return  result == 50272; }
+      if (R ==  2000 && S == 200) { return  result == 11088; }
+      if (R == 10000 && S == 200) { return  result == 53968; }
+
+      System.out.println("No result for R: " + R + " S: " + S + " result: " + result);
+      return false;
+    }
+
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "R (num rounds)", R);
         System.out.printf(BenchmarkRunner.argOutputFormat, "S (num smokers)", S);
         System.out.printf(BenchmarkRunner.argOutputFormat, "debug", debug);
     }
 
-    protected static int busyWait(final int limit) {
+    protected static int busyWait(final Random random, final int limit) {
         int test = 0;
 
         for (int k = 0; k < limit; k++) {
-            Math.random();
+            random.next();
             test++;
         }
 
