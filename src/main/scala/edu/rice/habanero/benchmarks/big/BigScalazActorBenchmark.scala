@@ -1,10 +1,14 @@
 package edu.rice.habanero.benchmarks.big
 
-import java.util.Random
+import som.Random
 
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.big.BigConfig.{ExitMessage, Message, PingMessage, PongMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -24,9 +28,10 @@ object BigScalazActorBenchmark {
       BigConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      val p = Promise[Integer]
 
-      val sinkActor = new SinkActor(BigConfig.W)
+      val sinkActor = new SinkActor(p, BigConfig.W)
       sinkActor.start()
 
       val bigActors = Array.tabulate[ScalazActor[AnyRef]](BigConfig.W)(i => {
@@ -45,10 +50,17 @@ object BigScalazActorBenchmark {
         loopActor.send(new PongMessage(-1))
       })
 
-      ScalazActorState.awaitTermination()
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      return Await.result(f, Duration.Inf) == BigConfig.W
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
@@ -97,7 +109,7 @@ object BigScalazActorBenchmark {
     }
 
     private def sendPing(): Unit = {
-      val target = random.nextInt(neighbors.size)
+      val target = random.next(neighbors.size)
       val targetActor = neighbors(target)
 
       expPinger = target
@@ -105,7 +117,7 @@ object BigScalazActorBenchmark {
     }
   }
 
-  private class SinkActor(numWorkers: Int) extends ScalazActor[AnyRef] {
+  private class SinkActor(completion: Promise[Integer], numWorkers: Int) extends ScalazActor[AnyRef] {
 
     private var numMessages = 0
     private var neighbors: Array[ScalazActor[AnyRef]] = null
@@ -117,11 +129,11 @@ object BigScalazActorBenchmark {
           numMessages += 1
           if (numMessages == numWorkers) {
             neighbors.foreach(loopWorker => loopWorker.send(ExitMessage.ONLY))
+            completion.success(numMessages)
             exit()
           }
 
         case nm: NeighborMessage =>
-
           neighbors = nm.neighbors
       }
     }

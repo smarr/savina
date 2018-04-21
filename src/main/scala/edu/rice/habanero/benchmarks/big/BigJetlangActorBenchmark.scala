@@ -1,10 +1,14 @@
 package edu.rice.habanero.benchmarks.big
 
-import java.util.Random
+import som.Random
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.big.BigConfig.{ExitMessage, Message, PingMessage, PongMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -24,9 +28,10 @@ object BigJetlangActorBenchmark {
       BigConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      val p = Promise[Integer]
 
-      val sinkActor = new SinkActor(BigConfig.W)
+      val sinkActor = new SinkActor(p, BigConfig.W)
       sinkActor.start()
 
       val bigActors = Array.tabulate[JetlangActor[AnyRef]](BigConfig.W)(i => {
@@ -45,10 +50,17 @@ object BigJetlangActorBenchmark {
         loopActor.send(new PongMessage(-1))
       })
 
-      JetlangActorState.awaitTermination()
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      return Await.result(f, Duration.Inf) == BigConfig.W
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
@@ -87,7 +99,6 @@ object BigJetlangActorBenchmark {
           }
 
         case em: ExitMessage =>
-
           exit()
 
         case nm: NeighborMessage =>
@@ -97,7 +108,7 @@ object BigJetlangActorBenchmark {
     }
 
     private def sendPing(): Unit = {
-      val target = random.nextInt(neighbors.size)
+      val target = random.next(neighbors.size)
       val targetActor = neighbors(target)
 
       expPinger = target
@@ -105,7 +116,7 @@ object BigJetlangActorBenchmark {
     }
   }
 
-  private class SinkActor(numWorkers: Int) extends JetlangActor[AnyRef] {
+  private class SinkActor(completion: Promise[Integer], numWorkers: Int) extends JetlangActor[AnyRef] {
 
     private var numMessages = 0
     private var neighbors: Array[JetlangActor[AnyRef]] = null
@@ -117,11 +128,11 @@ object BigJetlangActorBenchmark {
           numMessages += 1
           if (numMessages == numWorkers) {
             neighbors.foreach(loopWorker => loopWorker.send(ExitMessage.ONLY))
+            completion.success(numMessages)
             exit()
           }
 
         case nm: NeighborMessage =>
-
           neighbors = nm.neighbors
       }
     }

@@ -1,11 +1,17 @@
 package edu.rice.habanero.benchmarks.big
 
-import java.util.Random
+import som.Random
 
 import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.big.BigConfig.{ExitMessage, Message, PingMessage, PongMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.Future
+import akka.actor.ActorSystem
+import scala.concurrent.duration.Duration
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -17,6 +23,8 @@ object BigAkkaActorBenchmark {
   }
 
   private final class BigAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       BigConfig.parseArgs(args)
     }
@@ -25,11 +33,11 @@ object BigAkkaActorBenchmark {
       BigConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      system = AkkaActorState.newActorSystem("Big")
+      val p = Promise[Integer]
 
-      val system = AkkaActorState.newActorSystem("Big")
-
-      val sinkActor = system.actorOf(Props(new SinkActor(BigConfig.W)))
+      val sinkActor = system.actorOf(Props(new SinkActor(p, BigConfig.W)))
       AkkaActorState.startActor(sinkActor)
 
       val bigActors = Array.tabulate[ActorRef](BigConfig.W)(i => {
@@ -48,10 +56,17 @@ object BigAkkaActorBenchmark {
         loopActor ! new PongMessage(-1)
       })
 
-      AkkaActorState.awaitTermination(system)
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      import ExecutionContext.Implicits.global
+      val f = runIteration()
+      return Await.result(f, Duration.Inf) == BigConfig.W
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
@@ -97,7 +112,7 @@ object BigAkkaActorBenchmark {
     }
 
     private def sendPing(): Unit = {
-      val target = random.nextInt(neighbors.size)
+      val target = random.next(neighbors.size)
       val targetActor = neighbors(target)
 
       expPinger = target
@@ -105,7 +120,7 @@ object BigAkkaActorBenchmark {
     }
   }
 
-  private class SinkActor(numWorkers: Int) extends AkkaActor[AnyRef] {
+  private class SinkActor(completion: Promise[Integer], numWorkers: Int) extends AkkaActor[AnyRef] {
 
     private var numMessages = 0
     private var neighbors: Array[ActorRef] = null
@@ -117,6 +132,7 @@ object BigAkkaActorBenchmark {
           numMessages += 1
           if (numMessages == numWorkers) {
             neighbors.foreach(loopWorker => loopWorker ! ExitMessage.ONLY)
+            completion.success(numMessages)
             exit()
           }
 
