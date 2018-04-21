@@ -1,6 +1,6 @@
 package edu.rice.habanero.benchmarks.barber
 
-import java.util.Random
+import som.Random
 import java.util.concurrent.atomic.AtomicLong
 
 import akka.actor.{ActorRef, Props}
@@ -9,6 +9,11 @@ import edu.rice.habanero.benchmarks.barber.SleepingBarberConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import akka.actor.ActorSystem
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  * source: https://code.google.com/p/gparallelizer/wiki/ActorsExamples
@@ -22,6 +27,8 @@ object SleepingBarberAkkaActorBenchmark {
   }
 
   private final class SleepingBarberAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       SleepingBarberConfig.parseArgs(args)
     }
@@ -30,28 +37,32 @@ object SleepingBarberAkkaActorBenchmark {
       SleepingBarberConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      system = AkkaActorState.newActorSystem("SleepingBarber")
+      
+      val p = Promise[Integer]
 
-      val idGenerator = new AtomicLong(0)
-
-      val system = AkkaActorState.newActorSystem("SleepingBarber")
-
-      val barber = system.actorOf(Props(new BarberActor()))
+      val barber = system.actorOf(Props(new BarberActor(p)))
       val room = system.actorOf(Props(new WaitingRoomActor(SleepingBarberConfig.W, barber)))
-      val factoryActor = system.actorOf(Props(new CustomerFactoryActor(idGenerator, SleepingBarberConfig.N, room)))
+      val factoryActor = system.actorOf(Props(new CustomerFactoryActor(SleepingBarberConfig.N, room)))
 
       AkkaActorState.startActor(barber)
       AkkaActorState.startActor(room)
       AkkaActorState.startActor(factoryActor)
 
       factoryActor ! Start.ONLY
-
-      AkkaActorState.awaitTermination(system)
-
-      track("CustomerAttempts", idGenerator.get())
+      
+      p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return SleepingBarberConfig.verify(r)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
@@ -112,7 +123,7 @@ object SleepingBarberAkkaActorBenchmark {
     }
   }
 
-  private class BarberActor extends AkkaActor[AnyRef] {
+  private class BarberActor(completion: Promise[Integer]) extends AkkaActor[AnyRef] {
 
     private val random = new Random()
 
@@ -124,8 +135,8 @@ object SleepingBarberAkkaActorBenchmark {
           val room = message.room
 
           customer ! Start.ONLY
-          // println("Barber: Processing customer " + customer)
-          SleepingBarberConfig.busyWait(random.nextInt(SleepingBarberConfig.AHR) + 10)
+
+          SleepingBarberConfig.busyWait(random, random.next(SleepingBarberConfig.AHR) + 10)
           customer ! Done.ONLY
           room ! Next.ONLY
 
@@ -134,17 +145,17 @@ object SleepingBarberAkkaActorBenchmark {
         // println("Barber: No customers. Going to have a sleep")
 
         case message: Exit =>
-
+          completion.success(random.next())
           exit()
-
       }
     }
   }
 
-  private class CustomerFactoryActor(idGenerator: AtomicLong, haircuts: Int, room: ActorRef) extends AkkaActor[AnyRef] {
+  private class CustomerFactoryActor(haircuts: Int, room: ActorRef) extends AkkaActor[AnyRef] {
 
     private val random = new Random()
     private var numHairCutsSoFar = 0
+    private var idGenerator = 0
 
     override def process(msg: AnyRef) {
       msg match {
@@ -153,20 +164,18 @@ object SleepingBarberAkkaActorBenchmark {
           var i = 0
           while (i < haircuts) {
             sendCustomerToRoom()
-            SleepingBarberConfig.busyWait(random.nextInt(SleepingBarberConfig.APR) + 10)
+            SleepingBarberConfig.busyWait(random, random.next(SleepingBarberConfig.APR) + 10)
             i += 1
           }
 
         case message: Returned =>
-
-          idGenerator.incrementAndGet()
+          idGenerator += 1
           sendCustomerToRoom(message.customer)
 
         case message: Done =>
 
           numHairCutsSoFar += 1
           if (numHairCutsSoFar == haircuts) {
-            println("Total attempts: " + idGenerator.get())
             room ! Exit.ONLY
             exit()
           }
@@ -174,7 +183,8 @@ object SleepingBarberAkkaActorBenchmark {
     }
 
     private def sendCustomerToRoom() {
-      val customer = context.system.actorOf(Props(new CustomerActor(idGenerator.incrementAndGet(), self)))
+      val customer = context.system.actorOf(Props(new CustomerActor(idGenerator, self)))
+      idGenerator += 1
       AkkaActorState.startActor(customer)
 
       sendCustomerToRoom(customer)

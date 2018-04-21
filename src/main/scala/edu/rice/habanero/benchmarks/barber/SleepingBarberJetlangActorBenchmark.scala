@@ -1,6 +1,6 @@
 package edu.rice.habanero.benchmarks.barber
 
-import java.util.Random
+import som.Random
 import java.util.concurrent.atomic.AtomicLong
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
@@ -8,6 +8,10 @@ import edu.rice.habanero.benchmarks.barber.SleepingBarberConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import scala.concurrent.Future
 
 /**
  * source: https://code.google.com/p/gparallelizer/wiki/ActorsExamples
@@ -29,13 +33,12 @@ object SleepingBarberJetlangActorBenchmark {
       SleepingBarberConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      val p = Promise[Integer]
 
-      val idGenerator = new AtomicLong(0)
-
-      val barber = new BarberActor()
+      val barber = new BarberActor(p)
       val room = new WaitingRoomActor(SleepingBarberConfig.W, barber)
-      val factoryActor = new CustomerFactoryActor(idGenerator, SleepingBarberConfig.N, room)
+      val factoryActor = new CustomerFactoryActor(SleepingBarberConfig.N, room)
 
       barber.start()
       room.start()
@@ -43,12 +46,18 @@ object SleepingBarberJetlangActorBenchmark {
 
       factoryActor.send(Start.ONLY)
 
-      JetlangActorState.awaitTermination()
-
-      track("CustomerAttempts", idGenerator.get())
+      p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return SleepingBarberConfig.verify(r)
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
@@ -113,7 +122,7 @@ object SleepingBarberJetlangActorBenchmark {
     }
   }
 
-  private class BarberActor extends JetlangActor[AnyRef] {
+  private class BarberActor(completion: Promise[Integer]) extends JetlangActor[AnyRef] {
 
     private val random = new Random()
 
@@ -126,7 +135,7 @@ object SleepingBarberJetlangActorBenchmark {
 
           customer.send(Start.ONLY)
           // println("Barber: Processing customer " + customer)
-          SleepingBarberConfig.busyWait(random.nextInt(SleepingBarberConfig.AHR) + 10)
+          SleepingBarberConfig.busyWait(random, random.next(SleepingBarberConfig.AHR) + 10)
           customer.send(Done.ONLY)
           room.send(Next.ONLY)
 
@@ -135,18 +144,18 @@ object SleepingBarberJetlangActorBenchmark {
         // println("Barber: No customers. Going to have a sleep")
 
         case message: Exit =>
-
+          completion.success(random.next())
           exit()
-
       }
     }
   }
 
-  private class CustomerFactoryActor(idGenerator: AtomicLong, haircuts: Int, room: WaitingRoomActor) extends JetlangActor[AnyRef] {
+  private class CustomerFactoryActor(haircuts: Int, room: WaitingRoomActor) extends JetlangActor[AnyRef] {
 
     private val self = this
     private val random = new Random()
     private var numHairCutsSoFar = 0
+    private var idGenerator = 0
 
     override def process(msg: AnyRef) {
       msg match {
@@ -155,20 +164,19 @@ object SleepingBarberJetlangActorBenchmark {
           var i = 0
           while (i < haircuts) {
             sendCustomerToRoom()
-            SleepingBarberConfig.busyWait(random.nextInt(SleepingBarberConfig.APR) + 10)
+            SleepingBarberConfig.busyWait(random, random.next(SleepingBarberConfig.APR) + 10)
             i += 1
           }
 
         case message: Returned =>
 
-          idGenerator.incrementAndGet()
+          idGenerator += 1
           sendCustomerToRoom(message.customer)
 
         case message: Done =>
 
           numHairCutsSoFar += 1
           if (numHairCutsSoFar == haircuts) {
-            println("Total attempts: " + idGenerator.get())
             room.send(Exit.ONLY)
             exit()
           }
@@ -176,7 +184,9 @@ object SleepingBarberJetlangActorBenchmark {
     }
 
     private def sendCustomerToRoom() {
-      val customer = new CustomerActor(idGenerator.incrementAndGet(), self)
+      val customer = new CustomerActor(idGenerator, self)
+      idGenerator += 1
+      
       customer.start()
 
       sendCustomerToRoom(customer)
