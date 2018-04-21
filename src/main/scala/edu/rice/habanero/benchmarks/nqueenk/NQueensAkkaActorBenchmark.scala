@@ -4,6 +4,11 @@ import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.nqueenk.NQueensConfig.{DoneMessage, ResultMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import akka.actor.ActorSystem
+import scala.concurrent.Future
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -15,6 +20,8 @@ object NQueensAkkaActorBenchmark {
   }
 
   private final class NQueensAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       NQueensConfig.parseArgs(args)
     }
@@ -23,34 +30,33 @@ object NQueensAkkaActorBenchmark {
       NQueensConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Long] = {
+      system = AkkaActorState.newActorSystem("NQueens")
+      
+      val p = Promise[Long]
+      
       val numWorkers: Int = NQueensConfig.NUM_WORKERS
       val priorities: Int = NQueensConfig.PRIORITIES
-      val master: Array[ActorRef] = Array(null)
+      
+      val master = system.actorOf(Props(new Master(p, numWorkers, priorities)))
+      AkkaActorState.startActor(master)
 
-      val system = AkkaActorState.newActorSystem("NQueens")
-
-      master(0) = system.actorOf(Props(new Master(numWorkers, priorities)))
-      AkkaActorState.startActor(master(0))
-
-      AkkaActorState.awaitTermination(system)
-
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
       val expSolution = NQueensConfig.SOLUTIONS(NQueensConfig.SIZE - 1)
-      val actSolution = Master.resultCounter
-      val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
-      val valid = actSolution >= solutionsLimit && actSolution <= expSolution
+      val actSolution = Await.result(f, Duration.Inf)
+      return actSolution == expSolution
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
-      Master.resultCounter = 0
+      AkkaActorState.awaitTermination(system)
     }
   }
 
-  object Master {
-    var resultCounter: Long = 0
-  }
-
-  private class Master(numWorkers: Int, priorities: Int) extends AkkaActor[AnyRef] {
+  private class Master(completion: Promise[Long], numWorkers: Int, priorities: Int) extends AkkaActor[AnyRef] {
 
     private val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
     private final val workers = new Array[ActorRef](numWorkers)
@@ -58,6 +64,7 @@ object NQueensAkkaActorBenchmark {
     private var numWorkersTerminated: Int = 0
     private var numWorkSent: Int = 0
     private var numWorkCompleted: Int = 0
+    private var resultCounter: Long = 0
 
     override def onPostStart() {
       var i: Int = 0
@@ -82,14 +89,15 @@ object NQueensAkkaActorBenchmark {
         case workMessage: NQueensConfig.WorkMessage =>
           sendWork(workMessage)
         case _: NQueensConfig.ResultMessage =>
-          Master.resultCounter += 1
-          if (Master.resultCounter == solutionsLimit) {
+          resultCounter += 1
+          if (resultCounter == solutionsLimit) {
             requestWorkersToTerminate()
           }
         case _: NQueensConfig.DoneMessage =>
           numWorkCompleted += 1
           if (numWorkCompleted == numWorkSent) {
             requestWorkersToTerminate()
+            completion.success(resultCounter)
           }
         case _: NQueensConfig.StopMessage =>
           numWorkersTerminated += 1

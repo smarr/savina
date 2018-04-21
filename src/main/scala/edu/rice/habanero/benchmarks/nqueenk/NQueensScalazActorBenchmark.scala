@@ -3,6 +3,10 @@ package edu.rice.habanero.benchmarks.nqueenk
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.nqueenk.NQueensConfig.{DoneMessage, ResultMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Promise
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -22,33 +26,35 @@ object NQueensScalazActorBenchmark {
       NQueensConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Long] = {
+      val p = Promise[Long]
+      
       val numWorkers: Int = NQueensConfig.NUM_WORKERS
       val priorities: Int = NQueensConfig.PRIORITIES
-      val master: Array[Master] = Array(null)
 
-      master(0) = new Master(numWorkers, priorities)
-      master(0).start()
+      val master = new Master(p, numWorkers, priorities)
+      master.start()
 
-      ScalazActorState.awaitTermination()
-
+      return p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
       val expSolution = NQueensConfig.SOLUTIONS(NQueensConfig.SIZE - 1)
-      val actSolution = master(0).resultCounter
-      val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
-      val valid = actSolution >= solutionsLimit && actSolution <= expSolution
-
-      printf(BenchmarkRunner.argOutputFormat, "Solutions found", actSolution)
-      printf(BenchmarkRunner.argOutputFormat, "Result valid", valid)
+      val actSolution = Await.result(f, Duration.Inf)
+      return actSolution == expSolution
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class Master(numWorkers: Int, priorities: Int) extends ScalazActor[AnyRef] {
+  private class Master(completion: Promise[Long], numWorkers: Int, priorities: Int) extends ScalazActor[AnyRef] {
 
     private val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
     private final val workers = new Array[Worker](numWorkers)
@@ -89,6 +95,7 @@ object NQueensScalazActorBenchmark {
           numWorkCompleted += 1
           if (numWorkCompleted == numWorkSent) {
             requestWorkersToTerminate()
+            completion.success(resultCounter)
           }
         case _: NQueensConfig.StopMessage =>
           numWorkersTerminated += 1

@@ -3,6 +3,10 @@ package edu.rice.habanero.benchmarks.nqueenk
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.nqueenk.NQueensConfig.{DoneMessage, ResultMessage, StopMessage}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import scala.concurrent.Promise
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -22,37 +26,39 @@ object NQueensJetlangActorBenchmark {
       NQueensConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Long] = {
       val numWorkers: Int = NQueensConfig.NUM_WORKERS
       val priorities: Int = NQueensConfig.PRIORITIES
-      val master: Array[Master] = Array(null)
+      
 
-      master(0) = new Master(numWorkers, priorities)
-      master(0).start()
-
-      JetlangActorState.awaitTermination()
-
-      val expSolution = NQueensConfig.SOLUTIONS(NQueensConfig.SIZE - 1)
-      val actSolution = master(0).resultCounter
-      val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
-      val valid = actSolution >= solutionsLimit && actSolution <= expSolution
-
-      printf(BenchmarkRunner.argOutputFormat, "Solutions found", actSolution)
-      printf(BenchmarkRunner.argOutputFormat, "Result valid", valid)
+      val p = Promise[Long]
+      
+      val master = new Master(p, numWorkers, priorities)
+      master.start()
+      return p.future
     }
 
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val expSolution = NQueensConfig.SOLUTIONS(NQueensConfig.SIZE - 1)
+      val actSolution = Await.result(f, Duration.Inf)
+      return actSolution == expSolution
+    }
+    
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
     }
   }
 
-  private class Master(numWorkers: Int, priorities: Int) extends JetlangActor[AnyRef] {
+  private class Master(completion: Promise[Long], numWorkers: Int, priorities: Int) extends JetlangActor[AnyRef] {
 
     private val solutionsLimit = NQueensConfig.SOLUTIONS_LIMIT
     private final val workers = new Array[Worker](numWorkers)
-    var resultCounter: Long = 0
+    private var resultCounter: Long = 0
     private var messageCounter: Int = 0
     private var numWorkersTerminated: Int = 0
     private var numWorkSent: Int = 0
@@ -89,6 +95,7 @@ object NQueensJetlangActorBenchmark {
           numWorkCompleted += 1
           if (numWorkCompleted == numWorkSent) {
             requestWorkersToTerminate()
+            completion.success(resultCounter)
           }
         case _: NQueensConfig.StopMessage =>
           numWorkersTerminated += 1
