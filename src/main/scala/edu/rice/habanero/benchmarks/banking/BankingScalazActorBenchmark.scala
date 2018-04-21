@@ -5,7 +5,11 @@ import edu.rice.habanero.benchmarks.banking.BankingConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
 import scala.concurrent.Promise
-import scala.util.Random
+import som.Random
+import scala.concurrent.Future
+import scala.concurrent.duration.Duration
+import scala.concurrent.Await
+import scala.collection.mutable.ArrayBuffer
 
 /**
  *
@@ -26,31 +30,41 @@ object BankingScalazActorBenchmark {
       BankingConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Double] = {
+      val p = Promise[Double]
 
-      val master = new Teller(BankingConfig.A, BankingConfig.N)
+      val master = new Teller(p, BankingConfig.A, BankingConfig.N)
       master.start()
       master.send(StartMessage.ONLY)
 
-      ScalazActorState.awaitTermination()
+      p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return BankingConfig.verify(r);
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  protected class Teller(numAccounts: Int, numBankings: Int) extends ScalazActor[AnyRef] {
+  protected class Teller(completion: Promise[Double], numAccounts: Int, numBankings: Int) extends ScalazActor[AnyRef] {
 
     private val self = this
     private val accounts = Array.tabulate[Account](numAccounts)((i) => {
-      new Account(i, BankingConfig.INITIAL_BALANCE)
+      new Account(i)
     })
     private var numCompletedBankings = 0
 
-    private val randomGen = new Random(123456)
+    private val randomGen = new Random()
+    private var transferredAmount = 0.0
 
 
     protected override def onPostStart() {
@@ -68,16 +82,17 @@ object BankingScalazActorBenchmark {
             m += 1
           }
 
-        case sm: BankingConfig.ReplyMessage =>
+        case rm: BankingConfig.ReplyMessage =>
+          transferredAmount += rm.amount
 
           numCompletedBankings += 1
           if (numCompletedBankings == numBankings) {
+            completion.success(transferredAmount)
             accounts.foreach(loopAccount => loopAccount.send(StopMessage.ONLY))
             exit()
           }
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
@@ -85,8 +100,8 @@ object BankingScalazActorBenchmark {
 
     def generateWork(): Unit = {
       // src is lower than dest id to ensure there is never a deadlock
-      val srcAccountId = randomGen.nextInt((accounts.length / 10) * 8)
-      var loopId = randomGen.nextInt(accounts.length - srcAccountId)
+      val srcAccountId = randomGen.next((accounts.length / 10) * 8)
+      var loopId = randomGen.next(accounts.length - srcAccountId)
       if (loopId == 0) {
         loopId += 1
       }
@@ -102,28 +117,46 @@ object BankingScalazActorBenchmark {
     }
   }
 
-  protected class Account(id: Int, var balance: Double) extends ScalazActor[AnyRef] {
+  protected class Account(id: Int) extends ScalazActor[AnyRef] {
+    private var balance: Double = 0.0
+    
+    private val self = this
+    private var lastSender: Teller = null
+    private var waitingForReply = false
+    private val requests: ArrayBuffer[CreditMessage] = ArrayBuffer()
 
+    private def processCredit(cm: CreditMessage) {
+      balance -= cm.amount
+      
+      val dest = cm.recipient.asInstanceOf[Account]
+      dest.send(new DebitMessage(self, cm.amount))
+      
+      lastSender = cm.sender.asInstanceOf[Teller]
+    }
+    
     override def process(theMsg: AnyRef) {
       theMsg match {
         case dm: DebitMessage =>
-
           balance += dm.amount
-          val creditor = dm.sender.asInstanceOf[Promise[ReplyMessage]]
-          creditor.success(ReplyMessage.ONLY)
+          val creditor = dm.sender.asInstanceOf[Account]
+          creditor.send(new ReplyMessage(dm.amount))
 
         case cm: CreditMessage =>
-
-          balance -= cm.amount
-          val teller = cm.sender.asInstanceOf[ScalazActor[AnyRef]]
-
-          val sender = Promise[ReplyMessage]()
-          val destAccount = cm.recipient.asInstanceOf[Account]
-          destAccount.send(new DebitMessage(sender, cm.amount))
-
-          ScalazPool.await[ReplyMessage](sender)
-
-          teller.send(ReplyMessage.ONLY)
+          if (waitingForReply) {
+            requests.append(cm)
+          } else {
+            waitingForReply = true
+            processCredit(cm)
+          }
+          
+        case rm: ReplyMessage =>
+          lastSender.send(new ReplyMessage(rm.amount))
+          if (requests.isEmpty) {
+            waitingForReply = false
+          } else {
+            val req = requests.remove(0)
+            processCredit(req)
+          }
 
         case _: StopMessage =>
           exit()
