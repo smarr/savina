@@ -82,7 +82,7 @@ public final class GuidedSearchConfig {
                 }
             }
 
-            final Random random = new Random(123456L);
+            final Random random = new Random(123456);
             for (final GridNode gridNode : allNodes.values()) {
 
                 int iterCount = 0;
