@@ -5,6 +5,11 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Promise
+import scala.concurrent.Future
+import akka.actor.ActorSystem
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -15,8 +20,10 @@ object PhilosopherAkkaActorBenchmark {
   def main(args: Array[String]) {
     BenchmarkRunner.runBenchmark(args, new PhilosopherAkkaActorBenchmark)
   }
-
+  
   private final class PhilosopherAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
+    
     def initialize(args: Array[String]) {
       PhilosopherConfig.parseArgs(args)
     }
@@ -25,18 +32,15 @@ object PhilosopherAkkaActorBenchmark {
       PhilosopherConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Integer] = {
+      system = AkkaActorState.newActorSystem("Philosopher")
+      val p = Promise[Integer]
 
-      val system = AkkaActorState.newActorSystem("Philosopher")
-
-      val counter = new AtomicLong(0)
-
-
-      val arbitrator = system.actorOf(Props(new ArbitratorActor(PhilosopherConfig.N)))
+      val arbitrator = system.actorOf(Props(new ArbitratorActor(p, PhilosopherConfig.N)))
       AkkaActorState.startActor(arbitrator)
 
       val philosophers = Array.tabulate[ActorRef](PhilosopherConfig.N)(i => {
-        val loopActor = system.actorOf(Props(new PhilosopherActor(i, PhilosopherConfig.M, counter, arbitrator)))
+        val loopActor = system.actorOf(Props(new PhilosopherActor(i, PhilosopherConfig.M, arbitrator)))
         AkkaActorState.startActor(loopActor)
         loopActor
       })
@@ -45,32 +49,33 @@ object PhilosopherAkkaActorBenchmark {
         loopActor ! StartMessage()
       })
 
-      AkkaActorState.awaitTermination(system)
-
-      println("  Num retries: " + counter.get())
-      track("Avg. Retry Count", counter.get())
+      p.future
     }
-
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return r == 0
+    }
+ 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
-
 
   case class StartMessage()
 
   case class ExitMessage()
 
-  case class HungryMessage(philosopher: ActorRef, philosopherId: Int)
+  case class HungryMessage(philosopher: ActorRef, leftForkId: Int)
 
-  case class DoneMessage(philosopherId: Int)
+  case class DoneMessage(leftForkId: Int)
 
   case class EatMessage()
 
   case class DeniedMessage()
-
-
-  private class PhilosopherActor(id: Int, rounds: Int, counter: AtomicLong, arbitrator: ActorRef) extends AkkaActor[AnyRef] {
-
+  
+  private class PhilosopherActor(id: Int, rounds: Int, arbitrator: ActorRef) extends AkkaActor[AnyRef] {
     private var localCounter = 0L
     private var roundsSoFar = 0
 
@@ -79,16 +84,15 @@ object PhilosopherAkkaActorBenchmark {
 
     override def process(msg: AnyRef) {
       msg match {
-
         case dm: DeniedMessage =>
-
           localCounter += 1
           arbitrator ! myHungryMessage
 
         case em: EatMessage =>
-
           roundsSoFar += 1
-          counter.addAndGet(localCounter)
+          if (localCounter > 0) {
+            localCounter = 0L
+          }
 
           arbitrator ! myDoneMessage
           if (roundsSoFar < rounds) {
@@ -99,45 +103,43 @@ object PhilosopherAkkaActorBenchmark {
           }
 
         case sm: StartMessage =>
-
           arbitrator ! myHungryMessage
-
       }
     }
   }
 
-  private class ArbitratorActor(numForks: Int) extends AkkaActor[AnyRef] {
+  private class ArbitratorActor(completion: Promise[Integer], numForks: Int) extends AkkaActor[AnyRef] {
 
-    private val forks = Array.tabulate(numForks)(i => new AtomicBoolean(false))
+    private val forks = Array.fill[Boolean](numForks)(false)
     private var numExitedPhilosophers = 0
 
     override def process(msg: AnyRef) {
       msg match {
         case hm: HungryMessage =>
+          val rightForkId = (hm.leftForkId + 1) % numForks
 
-          val leftFork = forks(hm.philosopherId)
-          val rightFork = forks((hm.philosopherId + 1) % numForks)
-
-          if (leftFork.get() || rightFork.get()) {
+          if (forks(hm.leftForkId) || forks(rightForkId)) {
             // someone else has access to the fork
             hm.philosopher ! DeniedMessage()
           } else {
-            leftFork.set(true)
-            rightFork.set(true)
+            forks(hm.leftForkId) = true
+            forks(rightForkId) = true
             hm.philosopher ! EatMessage()
           }
 
         case dm: DoneMessage =>
-
-          val leftFork = forks(dm.philosopherId)
-          val rightFork = forks((dm.philosopherId + 1) % numForks)
-          leftFork.set(false)
-          rightFork.set(false)
+          val rightForkId = (dm.leftForkId + 1) % numForks
+          
+          forks(dm.leftForkId) = false
+          forks(rightForkId) = false
 
         case em: ExitMessage =>
-
           numExitedPhilosophers += 1
+          
           if (numForks == numExitedPhilosophers) {
+            var forksTaken = 0
+            forks.foreach {f =>  if (f) forksTaken += 1}
+            completion.success(forksTaken)
             exit()
           }
       }

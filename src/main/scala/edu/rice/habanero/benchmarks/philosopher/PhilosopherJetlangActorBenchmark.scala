@@ -4,6 +4,10 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
 import edu.rice.habanero.actors.{JetlangActor, JetlangActorState, JetlangPool}
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -24,15 +28,14 @@ object PhilosopherJetlangActorBenchmark {
       PhilosopherConfig.printArgs()
     }
 
-    def runIteration() {
-      val counter = new AtomicLong(0)
-
-
-      val arbitrator = new ArbitratorActor(PhilosopherConfig.N)
+    def runIteration() : Future[Integer] = {
+      val p = Promise[Integer]
+      
+      val arbitrator = new ArbitratorActor(p, PhilosopherConfig.N)
       arbitrator.start()
 
       val philosophers = Array.tabulate[JetlangActor[AnyRef]](PhilosopherConfig.N)(i => {
-        val loopActor = new PhilosopherActor(i, PhilosopherConfig.M, counter, arbitrator)
+        val loopActor = new PhilosopherActor(i, PhilosopherConfig.M, arbitrator)
         loopActor.start()
         loopActor
       })
@@ -41,13 +44,18 @@ object PhilosopherJetlangActorBenchmark {
         loopActor.send(StartMessage())
       })
 
-      JetlangActorState.awaitTermination()
-
-      println("  Num retries: " + counter.get())
-      track("Avg. Retry Count", counter.get())
+      p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return r == 0
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      JetlangActorState.awaitTermination()
+      
       if (lastIteration) {
         JetlangPool.shutdown()
       }
@@ -59,16 +67,16 @@ object PhilosopherJetlangActorBenchmark {
 
   case class ExitMessage()
 
-  case class HungryMessage(philosopher: JetlangActor[AnyRef], philosopherId: Int)
+  case class HungryMessage(philosopher: JetlangActor[AnyRef], leftForkId: Int)
 
-  case class DoneMessage(philosopherId: Int)
+  case class DoneMessage(leftForkId: Int)
 
   case class EatMessage()
 
   case class DeniedMessage()
 
 
-  private class PhilosopherActor(id: Int, rounds: Int, counter: AtomicLong, arbitrator: ArbitratorActor) extends JetlangActor[AnyRef] {
+  private class PhilosopherActor(id: Int, rounds: Int, arbitrator: ArbitratorActor) extends JetlangActor[AnyRef] {
 
     private val self = this
     private var localCounter = 0L
@@ -79,16 +87,15 @@ object PhilosopherJetlangActorBenchmark {
 
     override def process(msg: AnyRef) {
       msg match {
-
         case dm: DeniedMessage =>
-
           localCounter += 1
           arbitrator.send(myHungryMessage)
 
         case em: EatMessage =>
-
           roundsSoFar += 1
-          counter.addAndGet(localCounter)
+          if (localCounter > 0) {
+            localCounter = 0L
+          }
 
           arbitrator.send(myDoneMessage)
           if (roundsSoFar < rounds) {
@@ -99,45 +106,43 @@ object PhilosopherJetlangActorBenchmark {
           }
 
         case sm: StartMessage =>
-
           arbitrator.send(myHungryMessage)
-
       }
     }
   }
 
-  private class ArbitratorActor(numForks: Int) extends JetlangActor[AnyRef] {
+  private class ArbitratorActor(completion: Promise[Integer], numForks: Int) extends JetlangActor[AnyRef] {
 
-    private val forks = Array.tabulate(numForks)(i => new AtomicBoolean(false))
+    private val forks = Array.fill[Boolean](numForks)(false)
     private var numExitedPhilosophers = 0
 
     override def process(msg: AnyRef) {
       msg match {
         case hm: HungryMessage =>
+          val rightForkId = (hm.leftForkId + 1) % numForks
 
-          val leftFork = forks(hm.philosopherId)
-          val rightFork = forks((hm.philosopherId + 1) % numForks)
-
-          if (leftFork.get() || rightFork.get()) {
+          if (forks(hm.leftForkId) || forks(rightForkId)) {
             // someone else has access to the fork
             hm.philosopher.send(DeniedMessage())
           } else {
-            leftFork.set(true)
-            rightFork.set(true)
+            forks(hm.leftForkId) = true
+            forks(rightForkId) = true
             hm.philosopher.send(EatMessage())
           }
 
         case dm: DoneMessage =>
-
-          val leftFork = forks(dm.philosopherId)
-          val rightFork = forks((dm.philosopherId + 1) % numForks)
-          leftFork.set(false)
-          rightFork.set(false)
+          val rightForkId = (dm.leftForkId + 1) % numForks
+          
+          forks(dm.leftForkId) = false
+          forks(rightForkId) = false
 
         case em: ExitMessage =>
 
           numExitedPhilosophers += 1
           if (numForks == numExitedPhilosophers) {
+            var forksTaken = 0
+            forks.foreach {f =>  if (f) forksTaken += 1}
+            completion.success(forksTaken)
             exit()
           }
       }
