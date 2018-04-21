@@ -8,6 +8,7 @@ import com.typesafe.config.Config
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.astar.GuidedSearchConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import som.Random
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -128,7 +129,7 @@ object GuidedSearchAkkaPriorityActorBenchmark {
       while (!workQueue.isEmpty && nodesProcessed < threshold) {
 
         nodesProcessed += 1
-        GuidedSearchConfig.busyWait()
+        GuidedSearchConfig.busyWait(new Random()) // TODO
 
         val loopNode = workQueue.poll
         val numNeighbors: Int = loopNode.numNeighbors

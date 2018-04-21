@@ -1,9 +1,13 @@
 package edu.rice.habanero.benchmarks.astar;
 
-import edu.rice.habanero.benchmarks.BenchmarkRunner;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+
+import edu.rice.habanero.benchmarks.BenchmarkRunner;
+import som.Random;
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -162,9 +166,9 @@ public final class GuidedSearchConfig {
         return gridNode;
     }
 
-    protected static void busyWait() {
+    protected static void busyWait(final Random random) {
         for (int i = 0; i < 100; i++) {
-            Math.random();
+            random.next();
         }
     }
 

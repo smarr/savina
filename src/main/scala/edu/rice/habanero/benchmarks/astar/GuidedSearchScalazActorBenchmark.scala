@@ -5,6 +5,7 @@ import java.util
 import edu.rice.habanero.actors.{ScalazActor, ScalazActorState, ScalazPool}
 import edu.rice.habanero.benchmarks.astar.GuidedSearchConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import som.Random
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -125,7 +126,7 @@ object GuidedSearchScalazActorBenchmark {
       while (!workQueue.isEmpty && nodesProcessed < threshold) {
 
         nodesProcessed += 1
-        GuidedSearchConfig.busyWait()
+        GuidedSearchConfig.busyWait(new Random) // todo
 
         val loopNode = workQueue.poll
         val numNeighbors: Int = loopNode.numNeighbors

@@ -1,17 +1,17 @@
 package edu.rice.habanero.benchmarks.astar
 
-import java.util
-
 import akka.actor.{ActorRef, Props}
 import edu.rice.habanero.actors.{AkkaActor, AkkaActorState}
 import edu.rice.habanero.benchmarks.astar.GuidedSearchConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
+import scala.concurrent.Promise
+import som.Random
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
  */
 object GuidedSearchAkkaActorBenchmark {
-
+ 
   def main(args: Array[String]) {
     BenchmarkRunner.runBenchmark(args, new GuidedSearchAkkaActorBenchmark)
   }
@@ -45,7 +45,7 @@ object GuidedSearchAkkaActorBenchmark {
     }
   }
 
-  private class Master extends AkkaActor[AnyRef] {
+  private class Master(/* completion: Promise[Boolean] */) extends AkkaActor[AnyRef] {
 
     private final val numWorkers = GuidedSearchConfig.NUM_WORKERS
     private final val workers = new Array[ActorRef](numWorkers)
@@ -54,7 +54,6 @@ object GuidedSearchAkkaActorBenchmark {
     private var numWorkCompleted: Int = 0
 
     override def onPostStart() {
-
       var i: Int = 0
       while (i < numWorkers) {
         workers(i) = context.system.actorOf(Props(new Worker(self, i)))
@@ -118,14 +117,14 @@ object GuidedSearchAkkaActorBenchmark {
     private def search(workMessage: WorkMessage) {
 
       val targetNode = workMessage.target
-      val workQueue = new util.LinkedList[GridNode]
+      val workQueue = new java.util.LinkedList[GridNode]
       workQueue.add(workMessage.node)
 
       var nodesProcessed: Int = 0
       while (!workQueue.isEmpty && nodesProcessed < threshold) {
 
         nodesProcessed += 1
-        GuidedSearchConfig.busyWait()
+        GuidedSearchConfig.busyWait(new Random()) // TODO
 
         val loopNode = workQueue.poll
         val numNeighbors: Int = loopNode.numNeighbors
