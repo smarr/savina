@@ -1,6 +1,7 @@
 package edu.rice.habanero.benchmarks.barber;
 
 import edu.rice.habanero.benchmarks.BenchmarkRunner;
+import som.Random;
 
 /**
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
@@ -36,6 +37,17 @@ public final class SleepingBarberConfig {
         }
     }
 
+    public static boolean verify(final int result) {
+      if (N ==  800 && AHR ==  200) { return result == 11357; }
+      if (N == 1000 && AHR ==  500) { return result ==  5029; }
+      if (N == 2500 && AHR ==  500) { return result == 16033; }
+      if (N == 2500 && AHR == 1000) { return result == 32109; }
+      if (N == 5000 && AHR == 1000) { return result == 32109; }
+
+      System.out.println("no verification result for AHR: " + AHR + " result is: " + result);
+      return false;
+    }
+
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "N (num haircuts)", N);
         System.out.printf(BenchmarkRunner.argOutputFormat, "W (waiting room size)", W);
@@ -44,11 +56,11 @@ public final class SleepingBarberConfig {
         System.out.printf(BenchmarkRunner.argOutputFormat, "debug", debug);
     }
 
-    protected static int busyWait(final int limit) {
+    protected static int busyWait(final Random random, final int limit) {
         int test = 0;
 
         for (int k = 0; k < limit; k++) {
-            Math.random();
+            random.next();
             test++;
         }
 
