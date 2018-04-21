@@ -43,6 +43,21 @@ public final class LogisticMapConfig {
         }
     }
 
+    public static boolean verify(final double result) {
+      long r = Math.round(result * 1000000);
+
+      System.out.println("No result for numSeries: " + numSeries + " startRate: " + startRate + " r: " + r);
+
+      System.out.println("numTerms: " + numTerms);
+
+      if (numSeries == 10 && startRate == 3.46) { return r == 6387835; }
+      if (numSeries == 20 && startRate == 3.46) { return r == 11022424; }
+
+      System.out.println("No result for numSeries: " + numSeries + " startRate: " + startRate + " r: " + r);
+
+      return false;
+    }
+
     protected static void printArgs() {
         System.out.printf(BenchmarkRunner.argOutputFormat, "num terms", numTerms);
         System.out.printf(BenchmarkRunner.argOutputFormat, "num series", numSeries);

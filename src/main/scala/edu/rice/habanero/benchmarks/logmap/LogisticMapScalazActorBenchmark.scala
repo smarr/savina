@@ -5,6 +5,9 @@ import edu.rice.habanero.benchmarks.logmap.LogisticMapConfig._
 import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
 import scala.concurrent.Promise
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 /**
  *
@@ -25,23 +28,32 @@ object LogisticMapScalazActorBenchmark {
       LogisticMapConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Double] = {
+      val p = Promise[Double]
 
-      val master = new Master()
+      val master = new Master(p)
       master.start()
       master.send(StartMessage.ONLY)
 
-      ScalazActorState.awaitTermination()
+      p.future
+    }
+    
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return LogisticMapConfig.verify(r);
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      ScalazActorState.awaitTermination()
+      
       if (lastIteration) {
         ScalazPool.shutdown()
       }
     }
   }
 
-  private class Master extends ScalazActor[AnyRef] {
+  private class Master(completion: Promise[Double]) extends ScalazActor[AnyRef] {
 
     private final val self = this
 
@@ -96,8 +108,7 @@ object LogisticMapScalazActorBenchmark {
           numWorkReceived += 1
 
           if (numWorkRequested == numWorkReceived) {
-
-            println("Terms sum: " + termsSum)
+            completion.success(termsSum)
 
             computers.foreach(loopComputer => {
               loopComputer.send(StopMessage.ONLY)
@@ -119,29 +130,49 @@ object LogisticMapScalazActorBenchmark {
   private class SeriesWorker(id: Int, master: Master, computer: RateComputer, startTerm: Double) extends ScalazActor[AnyRef] {
 
     private final val self = this
-    private final val curTerm = Array.tabulate[Double](1)(i => startTerm)
+    private var curTerm = startTerm
+    private var waitingForReply = false
+    private var waitingNextTerm = 0
+    private var waitingGetTerm  = false
 
     override def process(theMsg: AnyRef) {
       theMsg match {
         case computeMessage: NextTermMessage =>
+          if (waitingForReply) {
+            waitingNextTerm += 1
+          } else {
+            val sender = self
+            val newMessage = new ComputeMessage(sender, curTerm)
+            computer.send(newMessage)
+            waitingForReply = true
+          }
 
-          val promise = Promise[ResultMessage]()
-          val newMessage = new ComputeMessage(promise, curTerm(0))
-          computer.send(newMessage)
-
-          val resultMessage = ScalazPool.await[ResultMessage](promise)
-          curTerm(0) = resultMessage.term
+        case rm: ResultMessage =>
+          if (waitingNextTerm > 0) {
+            waitingNextTerm -= 1
+            
+            val sender = self
+            val newMessage = new ComputeMessage(sender, rm.term)
+            computer.send(newMessage) 
+          } else {
+            curTerm = rm.term
+            waitingForReply = false
+            if (waitingGetTerm) {
+              master.send(new ResultMessage(rm.term))
+            }
+          }
 
         case _: GetTermMessage =>
-
-          master.send(new ResultMessage(curTerm(0)))
+          if (waitingForReply) {
+            waitingGetTerm = true
+          } else {
+            master.send(new ResultMessage(curTerm))
+          }
 
         case _: StopMessage =>
-
           exit()
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
@@ -153,18 +184,15 @@ object LogisticMapScalazActorBenchmark {
     override def process(theMsg: AnyRef) {
       theMsg match {
         case computeMessage: ComputeMessage =>
-
           val result = computeNextTerm(computeMessage.term, rate)
           val resultMessage = new ResultMessage(result)
-          val sender = computeMessage.sender.asInstanceOf[Promise[ResultMessage]]
-          sender.success(resultMessage)
+          val sender = computeMessage.sender.asInstanceOf[SeriesWorker]
+          sender.send(resultMessage)
 
         case _: StopMessage =>
-
           exit()
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }

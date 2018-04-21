@@ -9,18 +9,22 @@ import edu.rice.habanero.benchmarks.{Benchmark, BenchmarkRunner}
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import akka.actor.ActorSystem
+import scala.concurrent.Future
+import scala.concurrent.Promise
 
 /**
  *
  * @author <a href="http://shams.web.rice.edu/">Shams Imam</a> (shams@rice.edu)
  */
-object LogisticMapAkkaAwaitActorBenchmark {
+object LogisticMapAkkaActorBenchmark {
 
   def main(args: Array[String]) {
-    BenchmarkRunner.runBenchmark(args, new LogisticMapAkkaAwaitActorBenchmark)
+    BenchmarkRunner.runBenchmark(args, new LogisticMapAkkaActorBenchmark)
   }
 
-  private final class LogisticMapAkkaAwaitActorBenchmark extends Benchmark {
+  private final class LogisticMapAkkaActorBenchmark extends Benchmark {
+    var system: ActorSystem = null
     def initialize(args: Array[String]) {
       LogisticMapConfig.parseArgs(args)
     }
@@ -29,22 +33,29 @@ object LogisticMapAkkaAwaitActorBenchmark {
       LogisticMapConfig.printArgs()
     }
 
-    def runIteration() {
+    def runIteration() : Future[Double] = {
+      system = AkkaActorState.newActorSystem("LogisticMap")
+      val p = Promise[Double]
 
-      val system = AkkaActorState.newActorSystem("LogisticMap")
-
-      val master = system.actorOf(Props(new Master()))
+      val master = system.actorOf(Props(new Master(p)))
       AkkaActorState.startActor(master)
       master ! StartMessage.ONLY
 
-      AkkaActorState.awaitTermination(system)
+      p.future
+    }
+
+    override def runAndVerify() : Boolean = {
+      val f = runIteration()
+      val r = Await.result(f, Duration.Inf)
+      return LogisticMapConfig.verify(r);
     }
 
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double) {
+      AkkaActorState.awaitTermination(system)
     }
   }
 
-  private class Master extends AkkaActor[AnyRef] {
+  private class Master(completion: Promise[Double]) extends AkkaActor[AnyRef] {
 
     private final val numComputers: Int = LogisticMapConfig.numSeries
     private final val computers = Array.tabulate[ActorRef](numComputers)(i => {
@@ -97,8 +108,7 @@ object LogisticMapAkkaAwaitActorBenchmark {
           numWorkReceived += 1
 
           if (numWorkRequested == numWorkReceived) {
-
-            println("Terms sum: " + termsSum)
+            completion.success(termsSum)
 
             computers.foreach(loopComputer => {
               loopComputer ! StopMessage.ONLY
@@ -119,32 +129,49 @@ object LogisticMapAkkaAwaitActorBenchmark {
 
   private class SeriesWorker(id: Int, master: ActorRef, computer: ActorRef, startTerm: Double) extends AkkaActor[AnyRef] {
 
-    private final val curTerm = Array.tabulate[Double](1)(i => startTerm)
+    private var curTerm = startTerm
+    private var waitingForReply = false
+    private var waitingNextTerm = 0
+    private var waitingGetTerm  = false
 
     override def process(theMsg: AnyRef) {
       theMsg match {
         case computeMessage: NextTermMessage =>
+          if (waitingForReply) {
+            waitingNextTerm += 1
+          } else {
+            val sender = self
+            val newMessage = new ComputeMessage(sender, curTerm)
+            computer ! newMessage
+            waitingForReply = true
+          }
 
-          val sender = self
-          val newMessage = new ComputeMessage(sender, curTerm(0))
-
-          implicit val timeout = Timeout(60000 seconds)
-          val future = ask(computer, newMessage)
-          val result = Await.result(future, Duration.Inf)
-
-          val resultMessage = result.asInstanceOf[ResultMessage]
-          curTerm(0) = resultMessage.term
+        case rm: ResultMessage =>
+          if (waitingNextTerm > 0) {
+            waitingNextTerm -= 1
+            
+            val sender = self
+            val newMessage = new ComputeMessage(sender, rm.term)
+            computer ! newMessage 
+          } else {
+            curTerm = rm.term
+            waitingForReply = false
+            if (waitingGetTerm) {
+              master ! new ResultMessage(rm.term)
+            }
+          }
 
         case _: GetTermMessage =>
-
-          master ! new ResultMessage(curTerm(0))
+          if (waitingForReply) {
+            waitingGetTerm = true
+          } else {
+            master ! new ResultMessage(curTerm)
+          }
 
         case _: StopMessage =>
-
           exit()
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
@@ -156,17 +183,14 @@ object LogisticMapAkkaAwaitActorBenchmark {
     override def process(theMsg: AnyRef) {
       theMsg match {
         case computeMessage: ComputeMessage =>
-
           val result = computeNextTerm(computeMessage.term, rate)
           val resultMessage = new ResultMessage(result)
           sender() ! resultMessage
 
         case _: StopMessage =>
-
           exit()
 
         case message =>
-
           val ex = new IllegalArgumentException("Unsupported message: " + message)
           ex.printStackTrace(System.err)
       }
